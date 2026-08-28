@@ -41,6 +41,25 @@ function run_xophz_compass_freshmints() {
 		$api->register_routes();
 	} );
 
+	// Register with Event Horizon / YouMeOS Spark Registry
+	add_filter( 'xophz_register_sparks', function( $sparks ) {
+		$sparks['fresh-mints'] = array(
+			'id'          => 'fresh-mints',
+			'title'       => 'Fresh Mints',
+			'description' => 'Practice launch & skip-trace intelligence platform',
+			'icon'        => 'fal fa-sparkles',
+			'color'       => '#10b981',
+			'url'         => '/fresh-mints',
+			'category'    => 'productivity',
+			'type'        => 'webspark',
+			'status'      => 'pi',
+			'weight'      => 100,
+			'active'      => true,
+			'version'     => XOPHZ_COMPASS_FRESHMINTS_VERSION,
+		);
+		return $sparks;
+	} );
+
 	// Register with WP Connectors API
 	add_action( 'wp_connectors_init', function( $registry ) {
 		if ( method_exists( $registry, 'register' ) ) {

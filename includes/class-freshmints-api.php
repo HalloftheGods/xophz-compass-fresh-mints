@@ -184,10 +184,13 @@ class Freshmints_API {
 					),
 				),
 			),
-			'generationConfig' => array(
-				'responseMimeType' => 'application/json',
-			),
 		);
+
+		if ( empty( $tools ) ) {
+			$payload['generationConfig'] = array(
+				'responseMimeType' => 'application/json',
+			);
+		}
 
 		if ( ! empty( $system_instruction ) ) {
 			$payload['system_instruction'] = array(
@@ -213,7 +216,15 @@ class Freshmints_API {
 
 		$body = json_decode( wp_remote_retrieve_body( $response ), true );
 		if ( isset( $body['candidates'][0]['content']['parts'][0]['text'] ) ) {
-			return json_decode( $body['candidates'][0]['content']['parts'][0]['text'], true ) ?: $body['candidates'][0]['content']['parts'][0]['text'];
+			$raw_text = trim( $body['candidates'][0]['content']['parts'][0]['text'] );
+			$clean    = preg_replace( '/^```(?:json)?\s*|\s*```$/i', '', $raw_text );
+			if ( preg_match( '/\{[\s\S]*\}/', $clean, $matches ) ) {
+				$decoded = json_decode( $matches[0], true );
+				if ( $decoded ) {
+					return $decoded;
+				}
+			}
+			return json_decode( $clean, true ) ?: $raw_text;
 		}
 
 		return $body;
@@ -236,7 +247,7 @@ class Freshmints_API {
 			$clientType   = $payload['clientType'] ?? 'ideal local clients and patients';
 			$offerPrice   = $payload['offerPrice'] ?? '1650';
 			$monthlyRate  = $payload['monthlyRate'] ?? '34.99';
-			$websiteUrl   = $payload['websiteUrl'] ?? 'https://freshmints.ai/preview';
+			$websiteUrl   = $payload['websiteUrl'] ?? 'https://worldwidewebwork.com/preview';
 
 			$prompt = "You are a senior practice launch advisor at \"My Compass Consulting\", reaching out to a newly licensed practitioner.
 Generate an industry-tailored cold email pitch and matching SMS text message for:
@@ -271,56 +282,103 @@ Return JSON strictly matching this structure:
 			$profession    = $payload['profession'] ?? '';
 			$city          = $payload['city'] ?? '';
 			$state         = $payload['state'] ?? '';
+			$licenseNumber = $payload['licenseNumber'] ?? '';
 
-			$google_key = $this->get_api_key('google');
-			if (empty($google_key)) {
-				return rest_ensure_response( array( 'success' => false, 'error' => 'Google Places API Key not configured.' ) );
+			$phone         = '';
+			$phone_type    = 'Unverified';
+			$email         = '';
+			$linkedin      = '';
+			$website       = '';
+			$address       = "{$city}, {$state}";
+			$confidence    = 0;
+			$sources_found = array();
+
+			// Tier 1: Authoritative Google Places API (Text Search + Place Details)
+			$google_key = $this->get_api_key( 'google' );
+			if ( ! empty( $google_key ) ) {
+				$query = urlencode( "{$name} {$profession} {$city} {$state}" );
+				$url   = "https://maps.googleapis.com/maps/api/place/textsearch/json?query={$query}&key={$google_key}";
+				$res   = wp_remote_get( $url, array( 'timeout' => 15 ) );
+
+				if ( ! is_wp_error( $res ) && wp_remote_retrieve_response_code( $res ) === 200 ) {
+					$data  = json_decode( wp_remote_retrieve_body( $res ), true );
+					$place = $data['results'][0] ?? null;
+
+					if ( $place ) {
+						$place_id    = $place['place_id'];
+						$details_url = "https://maps.googleapis.com/maps/api/place/details/json?place_id={$place_id}&fields=formatted_phone_number,website,url,formatted_address&key={$google_key}";
+						$det_res     = wp_remote_get( $details_url, array( 'timeout' => 15 ) );
+
+						if ( ! is_wp_error( $det_res ) && wp_remote_retrieve_response_code( $det_res ) === 200 ) {
+							$det_data = json_decode( wp_remote_retrieve_body( $det_res ), true );
+							$details  = $det_data['result'] ?? array();
+
+							if ( ! empty( $details['formatted_phone_number'] ) ) {
+								$phone          = $details['formatted_phone_number'];
+								$phone_type     = 'Verified Practice Line';
+								$confidence     = 95;
+								$sources_found[] = 'Google Places API';
+							}
+
+							if ( ! empty( $details['website'] ) ) {
+								$website = $details['website'];
+							}
+
+							if ( ! empty( $details['formatted_address'] ) ) {
+								$address = $details['formatted_address'];
+							}
+						}
+					}
+				}
 			}
 
-			$query = urlencode("{$name} {$profession} {$city} {$state}");
-			$url = "https://maps.googleapis.com/maps/api/place/textsearch/json?query={$query}&key={$google_key}";
-			
-			$res = wp_remote_get($url, array('timeout' => 15));
-			if ( is_wp_error( $res ) ) {
-				return rest_ensure_response( array( 'success' => false, 'error' => $res->get_error_message() ) );
+			// Tier 2: Yelp Fusion API Directory Redundancy Fallback
+			$yelp_key = $this->get_api_key( 'yelp' );
+			if ( empty( $phone ) && ! empty( $yelp_key ) ) {
+				$term     = urlencode( "{$name} {$profession}" );
+				$location = urlencode( "{$city}, {$state}" );
+				$yelp_url = "https://api.yelp.com/v3/businesses/search?term={$term}&location={$location}&limit=1";
+				$yelp_res = wp_remote_get( $yelp_url, array(
+					'headers' => array( 'Authorization' => "Bearer {$yelp_key}" ),
+					'timeout' => 15,
+				) );
+
+				if ( ! is_wp_error( $yelp_res ) && wp_remote_retrieve_response_code( $yelp_res ) === 200 ) {
+					$yelp_data = json_decode( wp_remote_retrieve_body( $yelp_res ), true );
+					$biz       = $yelp_data['businesses'][0] ?? null;
+
+					if ( $biz && ( ! empty( $biz['display_phone'] ) || ! empty( $biz['phone'] ) ) ) {
+						$phone          = ! empty( $biz['display_phone'] ) ? $biz['display_phone'] : $biz['phone'];
+						$phone_type     = 'Yelp Directory Line';
+						$confidence     = 90;
+						$sources_found[] = 'Yelp Fusion API';
+
+						if ( ! empty( $biz['location']['address1'] ) ) {
+							$address = trim( ( $biz['location']['address1'] ?? '' ) . ', ' . ( $biz['location']['city'] ?? $city ) . ', ' . ( $biz['location']['state'] ?? $state ) );
+						}
+					}
+				}
 			}
 
-			$data = json_decode( wp_remote_retrieve_body( $res ), true );
-			$place = $data['results'][0] ?? null;
+			$has_contact = ! empty( $phone );
+			$notes = ! empty( $sources_found )
+				? ( 'Verified authentic directory phone via ' . implode( ' + ', $sources_found ) . '.' )
+				: 'No verified phone line found in Google Places or Yelp. (Deterministic API lookup - zero AI generation).';
 
-			if ($place) {
-				// We can optionally do a place details lookup to get the phone number, 
-				// but let's just return what we have from textsearch
-				$place_id = $place['place_id'];
-				$details_url = "https://maps.googleapis.com/maps/api/place/details/json?place_id={$place_id}&fields=formatted_phone_number,website,url,formatted_address&key={$google_key}";
-				$det_res = wp_remote_get($details_url, array('timeout' => 15));
-				$det_data = json_decode( wp_remote_retrieve_body( $det_res ), true );
-				$details = $det_data['result'] ?? array();
-
-				return rest_ensure_response( array( 'success' => true, 'data' => array(
-					"confidenceScore" => 90,
-					"verifiedPhone" => $details['formatted_phone_number'] ?? "",
-					"phoneType" => "Practice Line",
-					"dncStatus" => "Public Directory Listing",
-					"primaryEmail" => "",
-					"emailValidation" => "",
-					"linkedInUrl" => "",
-					"currentAddress" => $details['formatted_address'] ?? $place['formatted_address'] ?? "{$city}, {$state}",
-					"enrichmentNotes" => "Found via Google Places API."
-				) ) );
-			}
-
-			return rest_ensure_response( array( 'success' => true, 'data' => array(
-				"confidenceScore" => 0,
-				"verifiedPhone" => "",
-				"phoneType" => "Unverified",
-				"dncStatus" => "Public Directory Listing",
-				"primaryEmail" => "",
-				"emailValidation" => "",
-				"linkedInUrl" => "",
-				"currentAddress" => "{$city}, {$state}",
-				"enrichmentNotes" => "Not found in Google Places."
-			) ) );
+			return rest_ensure_response( array(
+				'success' => true,
+				'data'    => array(
+					'confidenceScore' => $has_contact ? ( $confidence > 0 ? $confidence : 90 ) : 0,
+					'verifiedPhone'   => $phone,
+					'phoneType'       => ! empty( $phone ) ? $phone_type : 'Unverified',
+					'dncStatus'       => ! empty( $phone ) ? 'Public Business Directory' : 'No Phone Found',
+					'primaryEmail'    => $email,
+					'emailValidation' => '',
+					'linkedInUrl'     => $linkedin,
+					'currentAddress'  => $address,
+					'enrichmentNotes' => $notes,
+				),
+			) );
 		}
 
 		return new WP_Error( 'invalid_action', 'Invalid generation action specified.', array( 'status' => 400 ) );
@@ -463,6 +521,9 @@ Return JSON strictly matching this structure:
 					$city          = ucwords( strtolower( trim( $addr['city'] ?? '' ) ) );
 					$issueDate     = $basic['enumeration_date'] ?? gmdate( 'Y-m-d' );
 					$gradYear      = (int) substr( $issueDate, 0, 4 );
+					$issueTimestamp = strtotime( $issueDate );
+					$isRecent      = ( $issueTimestamp !== false ) ? ( ( time() - $issueTimestamp ) <= ( 365 * 86400 ) ) : true;
+					$licenseStatus = $isRecent ? 'Active Board Pass' : 'Licensed Practitioner';
 
 					$previewSlug   = $this->generate_preview_slug( $fullName, 'nppes-' . ( $item['number'] ?? '' ) );
 					$dealVal       = $this->get_estimated_deal_value( $profession );
@@ -476,9 +537,9 @@ Return JSON strictly matching this structure:
 						'city'              => $city,
 						'licenseNumber'     => $licenseNumber,
 						'issueDate'         => $issueDate,
-						'collegeOrSchool'   => 'CMS Federal Health Registry',
+						'collegeOrSchool'   => "{$state} Healthcare Provider Registry",
 						'graduationYear'    => $gradYear > 1900 ? $gradYear : 2025,
-						'licenseStatus'     => 'Active Board Pass',
+						'licenseStatus'     => $licenseStatus,
 						'skipTraceStatus'   => ! empty( $phone ) ? 'Traced' : 'Not Traced',
 						'skipTraceData'     => ! empty( $phone ) ? array(
 							'tracedAt'        => gmdate( 'Y-m-d' ),
@@ -515,7 +576,7 @@ Return JSON strictly matching this structure:
 		}
 
 		// 2. Financial Advisors & Wealth Planners: Query Live FINRA BrokerCheck Public API
-		if ( in_array( $profession, array( 'financial_advisor', 'finance' ), true ) ) {
+		if ( $profession === 'financial_advisor' ) {
 			$finra_url = "https://api.brokercheck.finra.org/search/individual?query=advisor&hl=true&includePrevious=true&nrows={$limit}&start=0&r=25&state={$state}";
 			$res       = wp_remote_get( $finra_url, array( 'timeout' => 15 ) );
 
@@ -546,10 +607,10 @@ Return JSON strictly matching this structure:
 					$leads[] = array(
 						'id'                => 'finra-' . $crdNumber,
 						'fullName'          => $fullName,
-						'profession'        => $profession,
+						'profession'        => 'financial_advisor',
 						'professionTitle'   => 'Certified Financial Planner (CRD #' . $crdNumber . ')',
 						'state'             => $state,
-						'city'              => $city,
+						'city'              => ! empty( $city ) ? $city : $this->get_default_city_for_state( $state ),
 						'licenseNumber'     => 'CRD-' . $crdNumber,
 						'issueDate'         => $issueDate,
 						'collegeOrSchool'   => $firmName,
@@ -579,6 +640,86 @@ Return JSON strictly matching this structure:
 						'groundingNotes' => "Retrieved " . count( $leads ) . " live verified individual financial advisor records from FINRA BrokerCheck for {$state}.",
 						'totalFound'     => count( $leads ),
 					) );
+				}
+			}
+		}
+
+		// 3. State Socrata Open License Registries (e.g. NY State Open Data)
+		if ( $state === 'NY' ) {
+			$ny_license_terms = array(
+				'finance'      => 'Accountant',
+				'architecture' => 'Architect',
+				'veterinary'   => 'Veterinar',
+				'dental'       => 'Dentist',
+				'nursing'      => 'Nurse',
+				'therapy'      => 'Mental Health',
+				'beauty'       => 'Cosmetol',
+			);
+
+			$search_term = $ny_license_terms[ $profession ] ?? '';
+			if ( ! empty( $search_term ) ) {
+				$ny_url = "https://data.ny.gov/resource/k397-673v.json?\$limit={$limit}&\$order=issue_date%20DESC&\$q=" . urlencode( $search_term );
+				$ny_res = wp_remote_get( $ny_url, array( 'timeout' => 15 ) );
+
+				if ( ! is_wp_error( $ny_res ) && wp_remote_retrieve_response_code( $ny_res ) === 200 ) {
+					$ny_rows = json_decode( wp_remote_retrieve_body( $ny_res ), true );
+					if ( is_array( $ny_rows ) && ! empty( $ny_rows ) ) {
+						$leads = array();
+						foreach ( $ny_rows as $row ) {
+							$raw_name = trim( $row['name'] ?? '' );
+							if ( empty( $raw_name ) ) {
+								$raw_name = trim( ( $row['first_name'] ?? '' ) . ' ' . ( $row['last_name'] ?? '' ) );
+							}
+							$fullName = ucwords( strtolower( $raw_name ) );
+							if ( empty( $fullName ) ) {
+								continue;
+							}
+
+							$lic_num     = (string) ( $row['license_number'] ?? ( 'NY-' . uniqid() ) );
+							$city        = ucwords( strtolower( trim( $row['city'] ?? 'New York' ) ) );
+							$issueDate   = substr( $row['issue_date'] ?? gmdate( 'Y-m-d' ), 0, 10 );
+							$gradYear    = (int) substr( $issueDate, 0, 4 );
+							$previewSlug = $this->generate_preview_slug( $fullName, 'ny-' . $lic_num );
+							$dealVal     = $this->get_estimated_deal_value( $profession );
+
+							$leads[] = array(
+								'id'                => 'ny-' . sanitize_title( $lic_num ),
+								'fullName'          => $fullName,
+								'profession'        => $profession,
+								'professionTitle'   => $row['license_type'] ?? 'Licensed Professional',
+								'state'             => 'NY',
+								'city'              => $city,
+								'licenseNumber'     => 'NY-' . $lic_num,
+								'issueDate'         => $issueDate,
+								'collegeOrSchool'   => 'New York State Education Department',
+								'graduationYear'    => $gradYear > 1900 ? $gradYear : 2025,
+								'licenseStatus'     => 'Active Board Pass',
+								'skipTraceStatus'   => 'Not Traced',
+								'skipTraceData'     => null,
+								'outreachStatus'    => 'Uncontacted',
+								'websiteConfig'     => array(
+									'previewSlug'     => $previewSlug,
+									'heroHeadline'    => "{$fullName} - {$profession}",
+									'heroSubheadline' => "Professional services in {$city}, NY.",
+									'tagline'         => "Verified New York Practice",
+									'previewUrl'      => home_url( "/fresh-mints/#/preview/{$previewSlug}" ),
+									'offerPrice'      => $dealVal,
+								),
+								'estimatedDealValue' => $dealVal,
+								'createdAt'         => gmdate( 'c' ),
+							);
+						}
+
+						if ( ! empty( $leads ) ) {
+							return rest_ensure_response( array(
+								'success'        => true,
+								'source'         => "New York State Open Data Registry (NY)",
+								'leads'          => $leads,
+								'groundingNotes' => "Retrieved " . count( $leads ) . " live verified {$profession} practitioner records from NY State Open Data.",
+								'totalFound'     => count( $leads ),
+							) );
+						}
+					}
 				}
 			}
 		}
