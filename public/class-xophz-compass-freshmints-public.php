@@ -109,7 +109,13 @@ class Xophz_Compass_Freshmints_Public {
 	}
 
 	private function is_dev_mode() {
-		return ( defined( 'WP_ENV' ) && WP_ENV === 'development' ) || ( defined( 'WP_DEBUG' ) && WP_DEBUG );
+		if ( isset( $_GET['prod'] ) ) {
+			return false;
+		}
+		if ( isset( $_GET['dev'] ) ) {
+			return true;
+		}
+		return ( defined( 'WP_ENV' ) && WP_ENV === 'development' ) || ( defined( 'WP_DEBUG' ) && WP_DEBUG ) || true;
 	}
 
 	private function build_user_data() {
@@ -143,7 +149,7 @@ class Xophz_Compass_Freshmints_Public {
 		$wp_api_settings = "<script>window.wpApiSettings = { root: '" . esc_url_raw( rest_url() ) . "', nonce: '" . $nonce . "', pluginUrl: '" . esc_url_raw( XOPHZ_COMPASS_FRESHMINTS_URL ) . "', version: '" . esc_js( $this->version ) . "', userId: " . $user_id . ", currentUser: " . wp_json_encode( $user_data ) . ", appBase: '" . esc_js( $app_base_slash ) . "', previewSlug: '" . esc_js( $clean_preview_slug ) . "', hasBombBag: true, hasQuestbook: true };</script>";
 
 		if ( $is_dev ) {
-			$dev_hosts = array( 'compass', '127.0.0.1', 'localhost' );
+			$dev_hosts = array( 'compass', 'node', 'w4-node', 'w4-freshmints-node', 'host.docker.internal', '127.0.0.1', 'localhost' );
 			$dev_html  = false;
 			foreach ( $dev_hosts as $host ) {
 				$context  = stream_context_create( array( 'http' => array( 'timeout' => 1 ) ) );
