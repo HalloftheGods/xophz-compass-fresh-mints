@@ -6,7 +6,7 @@
  * Author:            Hall of the Gods, Inc.
  * Category:          Command Deck
  * Group:             Ecosystem
- * Text Domain:       xophz-compass-freshmints
+ * Text Domain:       xophz-compass-fresh-mints
  */
 
 if ( ! defined( 'WPINC' ) ) {
