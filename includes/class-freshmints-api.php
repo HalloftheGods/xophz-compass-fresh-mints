@@ -292,14 +292,17 @@ Return JSON strictly matching this structure:
 			$state         = $payload['state'] ?? '';
 			$licenseNumber = $payload['licenseNumber'] ?? '';
 
-			$phone         = '';
-			$phone_type    = 'Unverified';
-			$email         = '';
-			$linkedin      = '';
-			$website       = '';
-			$address       = "{$city}, {$state}";
-			$confidence    = 0;
-			$sources_found = array();
+			$phone            = '';
+			$phone_type       = 'Unverified';
+			$email            = '';
+			$secondary_email  = '';
+			$linkedin         = '';
+			$website          = '';
+			$address          = "{$city}, {$state}";
+			$confidence       = 0;
+			$sources_found    = array();
+			$extracted_emails = array();
+			$extracted_phones = array();
 
 			// Tier 1: Authoritative Google Places API (Text Search + Place Details)
 			$google_key = $this->get_api_key( 'google' );
@@ -322,14 +325,26 @@ Return JSON strictly matching this structure:
 							$details  = $det_data['result'] ?? array();
 
 							if ( ! empty( $details['formatted_phone_number'] ) ) {
-								$phone          = $details['formatted_phone_number'];
-								$phone_type     = 'Verified Practice Line';
-								$confidence     = 95;
+								$phone           = $details['formatted_phone_number'];
+								$phone_type      = 'Verified Practice Line';
+								$confidence      = 95;
 								$sources_found[] = 'Google Places API';
 							}
 
 							if ( ! empty( $details['website'] ) ) {
-								$website = $details['website'];
+								$raw_site = trim( $details['website'] );
+								// Exclude directories from standalone website classification
+								$blacklist = array( 'yelp.com', 'healthgrades.com', 'zocdoc.com', 'linkedin.com', 'facebook.com', 'vitals.com', 'webmd.com', 'realtor.com', 'zillow.com' );
+								$is_dir    = false;
+								foreach ( $blacklist as $b_dom ) {
+									if ( strpos( strtolower( $raw_site ), $b_dom ) !== false ) {
+										$is_dir = true;
+										break;
+									}
+								}
+								if ( ! $is_dir ) {
+									$website = $raw_site;
+								}
 							}
 
 							if ( ! empty( $details['formatted_address'] ) ) {
@@ -356,9 +371,9 @@ Return JSON strictly matching this structure:
 					$biz       = $yelp_data['businesses'][0] ?? null;
 
 					if ( $biz && ( ! empty( $biz['display_phone'] ) || ! empty( $biz['phone'] ) ) ) {
-						$phone          = ! empty( $biz['display_phone'] ) ? $biz['display_phone'] : $biz['phone'];
-						$phone_type     = 'Yelp Directory Line';
-						$confidence     = 90;
+						$phone           = ! empty( $biz['display_phone'] ) ? $biz['display_phone'] : $biz['phone'];
+						$phone_type      = 'Yelp Directory Line';
+						$confidence      = 90;
 						$sources_found[] = 'Yelp Fusion API';
 
 						if ( ! empty( $biz['location']['address1'] ) ) {
@@ -368,10 +383,31 @@ Return JSON strictly matching this structure:
 				}
 			}
 
-			$has_contact = ! empty( $phone );
+			// Tier 3: Website Crawl & Contact Scraper
+			if ( ! empty( $website ) ) {
+				$scraped = $this->scrape_website_contact_info( $website );
+				$extracted_emails = $scraped['emails'] ?? array();
+				$extracted_phones = $scraped['phones'] ?? array();
+
+				if ( ! empty( $scraped['primaryEmail'] ) ) {
+					$email            = $scraped['primaryEmail'];
+					$secondary_email  = $scraped['emails'][1] ?? '';
+					$sources_found[]  = 'Website Contact Scraper (' . ( parse_url( $website, PHP_URL_HOST ) ?: $website ) . ')';
+					$confidence       = max( $confidence, 92 );
+				}
+
+				if ( empty( $phone ) && ! empty( $scraped['primaryPhone'] ) ) {
+					$phone           = $scraped['primaryPhone'];
+					$phone_type      = 'Website Scraped Line';
+					$sources_found[] = 'Website Phone Scraper';
+					$confidence      = max( $confidence, 88 );
+				}
+			}
+
+			$has_contact = ! empty( $phone ) || ! empty( $email );
 			$notes = ! empty( $sources_found )
-				? ( 'Verified authentic directory phone via ' . implode( ' + ', $sources_found ) . '.' )
-				: 'No verified phone line found in Google Places or Yelp. (Deterministic API lookup - zero AI generation).';
+				? ( 'Verified authentic coordinates via ' . implode( ' + ', $sources_found ) . '.' )
+				: 'No verified contact record found in Google Places or Yelp. (Deterministic API lookup - zero synthetic generation).';
 
 			return rest_ensure_response( array(
 				'success' => true,
@@ -381,7 +417,11 @@ Return JSON strictly matching this structure:
 					'phoneType'       => ! empty( $phone ) ? $phone_type : 'Unverified',
 					'dncStatus'       => ! empty( $phone ) ? 'Public Business Directory' : 'No Phone Found',
 					'primaryEmail'    => $email,
-					'emailValidation' => '',
+					'secondaryEmail'  => $secondary_email,
+					'websiteUrl'      => $website,
+					'extractedEmails' => $extracted_emails,
+					'extractedPhones' => $extracted_phones,
+					'emailValidation' => ! empty( $email ) ? 'Website Scraped & Verified' : '',
 					'linkedInUrl'     => $linkedin,
 					'currentAddress'  => $address,
 					'enrichmentNotes' => $notes,
@@ -390,6 +430,193 @@ Return JSON strictly matching this structure:
 		}
 
 		return new WP_Error( 'invalid_action', 'Invalid generation action specified.', array( 'status' => 400 ) );
+	}
+
+	/**
+	 * Scrape website and contact pages for authentic email addresses and phone numbers.
+	 *
+	 * @param string $url Target website URL
+	 * @return array Scraped contact data
+	 */
+	public function scrape_website_contact_info( $url ) {
+		$result = array(
+			'websiteUrl'   => $url,
+			'emails'       => array(),
+			'phones'       => array(),
+			'primaryEmail' => '',
+			'primaryPhone' => '',
+			'pagesScanned' => array(),
+		);
+
+		if ( empty( $url ) ) {
+			return $result;
+		}
+
+		$clean_url = trim( $url );
+		if ( ! preg_match( '~^https?://~i', $clean_url ) ) {
+			$clean_url = 'https://' . $clean_url;
+		}
+
+		if ( ! filter_var( $clean_url, FILTER_VALIDATE_URL ) ) {
+			return $result;
+		}
+
+		$result['websiteUrl'] = $clean_url;
+		$parsed_base = parse_url( $clean_url );
+		$base_host   = $parsed_base['host'] ?? '';
+		$base_scheme = $parsed_base['scheme'] ?? 'https';
+
+		if ( empty( $base_host ) ) {
+			return $result;
+		}
+
+		// Disallowed domain check for scraping
+		$ignore_hosts = array( 'facebook.com', 'instagram.com', 'yelp.com', 'linkedin.com', 'twitter.com', 'x.com', 'google.com', 'healthgrades.com', 'zocdoc.com' );
+		foreach ( $ignore_hosts as $ih ) {
+			if ( strpos( strtolower( $base_host ), $ih ) !== false ) {
+				return $result;
+			}
+		}
+
+		$fetch_and_extract = function( $target_url ) use ( &$result ) {
+			$res = wp_remote_get( $target_url, array(
+				'timeout'     => 10,
+				'redirection' => 3,
+				'user-agent'  => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+				'headers'     => array(
+					'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+				),
+				'sslverify'   => false,
+			) );
+
+			if ( is_wp_error( $res ) || wp_remote_retrieve_response_code( $res ) !== 200 ) {
+				return array( 'html' => '', 'emails' => array(), 'phones' => array(), 'contact_links' => array() );
+			}
+
+			$html = wp_remote_retrieve_body( $res );
+			$result['pagesScanned'][] = $target_url;
+
+			$found_emails  = array();
+			$found_phones  = array();
+			$contact_links = array();
+
+			// 1. Extract mailto: links
+			if ( preg_match_all( '/mailto:([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i', $html, $m_matches ) ) {
+				foreach ( $m_matches[1] as $em ) {
+					$clean_em = strtolower( trim( $em ) );
+					if ( ! in_array( $clean_em, $found_emails, true ) ) {
+						$found_emails[] = $clean_em;
+					}
+				}
+			}
+
+			// 2. Extract general regex emails
+			if ( preg_match_all( '/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/', $html, $reg_matches ) ) {
+				foreach ( $reg_matches[0] as $em ) {
+					$clean_em = strtolower( trim( $em ) );
+					if ( ! in_array( $clean_em, $found_emails, true ) ) {
+						$found_emails[] = $clean_em;
+					}
+				}
+			}
+
+			// 3. Extract tel: links
+			if ( preg_match_all( '/href=[\'"]tel:([^\'"\s>]+)[\'"]/i', $html, $tel_matches ) ) {
+				foreach ( $tel_matches[1] as $ph ) {
+					$clean_ph = trim( preg_replace( '/[^\d\+\(\)\-\.\s]/', '', $ph ) );
+					if ( strlen( preg_replace( '/\D/', '', $clean_ph ) ) >= 10 && ! in_array( $clean_ph, $found_phones, true ) ) {
+						$found_phones[] = $clean_ph;
+					}
+				}
+			}
+
+			// 4. Extract possible internal contact/about subpage links
+			if ( preg_match_all( '/href=[\'"]([^\'"#\s>]+)[\'"]/i', $html, $href_matches ) ) {
+				foreach ( $href_matches[1] as $href ) {
+					if ( preg_match( '/(contact|about|team|staff|reach|connect|doctors|practitioners)/i', $href ) ) {
+						// Filter out static assets
+						if ( ! preg_match( '/\.(jpg|jpeg|png|gif|svg|css|js|pdf|webp)$/i', $href ) ) {
+							$contact_links[] = $href;
+						}
+					}
+				}
+			}
+
+			return array(
+				'html'          => $html,
+				'emails'        => $found_emails,
+				'phones'        => $found_phones,
+				'contact_links' => array_unique( $contact_links ),
+			);
+		};
+
+		// Helper to filter out system / garbage emails
+		$filter_clean_emails = function( array $raw_emails ) {
+			$invalid_needles = array(
+				'example.com', 'domain.com', 'sentry.io', 'wixpress.com', 'wordpress.org', 'wp.com',
+				'cloudflare.com', 'google.com', 'schema.org', 'w3.org', 'github.com', 'fontawesome',
+				'bootstrap', 'jquery', 'npm', 'user@', 'email@', 'test@', 'yourname@', 'name@',
+				'.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.css', '.js'
+			);
+			$clean = array();
+			foreach ( $raw_emails as $em ) {
+				$em_lower = strtolower( trim( $em ) );
+				if ( ! filter_var( $em_lower, FILTER_VALIDATE_EMAIL ) ) {
+					continue;
+				}
+				$skip = false;
+				foreach ( $invalid_needles as $inv ) {
+					if ( strpos( $em_lower, $inv ) !== false ) {
+						$skip = true;
+						break;
+					}
+				}
+				if ( ! $skip && ! in_array( $em_lower, $clean, true ) ) {
+					$clean[] = $em_lower;
+				}
+			}
+			return $clean;
+		};
+
+		// 1. Fetch Homepage
+		$homepage_data = $fetch_and_extract( $clean_url );
+		$all_emails    = $filter_clean_emails( $homepage_data['emails'] );
+		$all_phones    = $homepage_data['phones'];
+
+		// 2. If no email or fewer than 2 emails found, crawl top contact/about subpage
+		if ( count( $all_emails ) < 2 && ! empty( $homepage_data['contact_links'] ) ) {
+			foreach ( array_slice( $homepage_data['contact_links'], 0, 2 ) as $link ) {
+				$sub_url = $link;
+				if ( strpos( $link, 'http' ) !== 0 ) {
+					$sub_url = rtrim( "{$base_scheme}://{$base_host}", '/' ) . '/' . ltrim( $link, '/' );
+				}
+				$sub_host = parse_url( $sub_url, PHP_URL_HOST );
+				if ( $sub_host && strpos( $sub_host, $base_host ) !== false ) {
+					$sub_data   = $fetch_and_extract( $sub_url );
+					$sub_emails = $filter_clean_emails( $sub_data['emails'] );
+					foreach ( $sub_emails as $se ) {
+						if ( ! in_array( $se, $all_emails, true ) ) {
+							$all_emails[] = $se;
+						}
+					}
+					foreach ( $sub_data['phones'] as $sp ) {
+						if ( ! in_array( $sp, $all_phones, true ) ) {
+							$all_phones[] = $sp;
+						}
+					}
+					if ( count( $all_emails ) >= 2 ) {
+						break;
+					}
+				}
+			}
+		}
+
+		$result['emails']       = $all_emails;
+		$result['phones']       = $all_phones;
+		$result['primaryEmail'] = ! empty( $all_emails ) ? $all_emails[0] : '';
+		$result['primaryPhone'] = ! empty( $all_phones ) ? $all_phones[0] : '';
+
+		return $result;
 	}
 
 	/**
@@ -412,6 +639,8 @@ Return JSON strictly matching this structure:
 				'summary'              => "No API key configured for Google Places.",
 				'pitchStrategy'        => 'Pitch turnkey practice website package ($1,650 with 2 years hosting included).',
 				'socialProfilesFound'  => array(),
+				'extractedEmails'      => array(),
+				'extractedPhones'      => array(),
 				'qualifications'       => array(
 					'hasCustomDomain'              => false,
 					'domainCheckSummary'           => "No API key",
@@ -431,8 +660,10 @@ Return JSON strictly matching this structure:
 		$data = json_decode( wp_remote_retrieve_body( $res ), true );
 		$place = $data['results'][0] ?? null;
 
-		$hasWebsite = false;
-		$existingUrl = null;
+		$hasWebsite       = false;
+		$existingUrl      = null;
+		$extracted_emails = array();
+		$extracted_phones = array();
 
 		if ($place) {
 			$place_id = $place['place_id'];
@@ -443,34 +674,45 @@ Return JSON strictly matching this structure:
 
 			if ($website) {
 				// filter out common directories
-				$blacklist = ['yelp.com', 'healthgrades.com', 'zocdoc.com', 'linkedin.com', 'facebook.com', 'vitals.com', 'webmd.com', 'realtor.com', 'zillow.com'];
+				$blacklist = array( 'yelp.com', 'healthgrades.com', 'zocdoc.com', 'linkedin.com', 'facebook.com', 'vitals.com', 'webmd.com', 'realtor.com', 'zillow.com' );
 				$is_directory = false;
 				foreach ($blacklist as $domain) {
-					if (strpos($website, $domain) !== false) {
+					if (strpos(strtolower($website), $domain) !== false) {
 						$is_directory = true;
 						break;
 					}
 				}
 				if (!$is_directory) {
-					$hasWebsite = true;
+					$hasWebsite  = true;
 					$existingUrl = $website;
+
+					// Scrape website for contact emails and phones
+					$scraped          = $this->scrape_website_contact_info( $existingUrl );
+					$extracted_emails = $scraped['emails'] ?? array();
+					$extracted_phones = $scraped['phones'] ?? array();
 				}
 			}
 		}
+
+		$summary_note = $hasWebsite
+			? "Found standalone website: {$existingUrl}" . ( ! empty( $extracted_emails ) ? ( ' (Extracted ' . count( $extracted_emails ) . ' verified email(s): ' . implode( ', ', $extracted_emails ) . ')' ) : '' )
+			: "No active standalone custom domain found for {$leadName} in {$city}, {$state}.";
 
 		$result = array(
 			'hasWebsite'           => $hasWebsite,
 			'existingUrl'          => $existingUrl,
 			'status'               => $hasWebsite ? 'Website Found' : 'No Website Found - High Opportunity',
-			'summary'              => $hasWebsite ? "Found standalone website: {$existingUrl}" : "No active standalone custom domain found for {$leadName} in {$city}, {$state}.",
+			'summary'              => $summary_note,
 			'pitchStrategy'        => $hasWebsite ? 'Pitch SEO/Marketing or upgrade' : 'Pitch turnkey practice website package ($1,650 with 2 years hosting included).',
 			'socialProfilesFound'  => array(),
+			'extractedEmails'      => $extracted_emails,
+			'extractedPhones'      => $extracted_phones,
 			'qualifications'       => array(
 				'hasCustomDomain'              => $hasWebsite,
-				'domainCheckSummary'           => $hasWebsite ? "Found domain" : "No root domain registered for {$leadName}",
+				'domainCheckSummary'           => $hasWebsite ? "Found domain ({$existingUrl})" : "No root domain registered for {$leadName}",
 				'hasDirectBookingPortal'       => false,
 				'isOnlyDirectoryOrBoardListing'=> !$hasWebsite,
-				'digitalFootprintRating'       => $hasWebsite ? 'Established' : 'Registry Only',
+				'digitalFootprintRating'       => $hasWebsite ? 'Established Custom Site' : 'Registry Only',
 			),
 			'checkedAt'            => gmdate( 'c' ),
 		);
@@ -712,6 +954,7 @@ Return JSON strictly matching this structure:
 					'verifiedPhone'   => $formatted_phone,
 					'phoneType'       => 'Google Business Line',
 					'primaryEmail'    => '',
+					'websiteUrl'      => $website_url,
 					'currentAddress'  => $formatted_address,
 					'enrichmentNotes' => "Google Places Verified (Rating: {$rating} stars across {$reviews_count} reviews)",
 				) : null,
