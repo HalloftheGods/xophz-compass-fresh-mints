@@ -106,8 +106,16 @@ function xophz_compass_freshmints_deactivate() {
 register_deactivation_hook( __FILE__, 'xophz_compass_freshmints_deactivate' );
 
 function xophz_compass_freshmints_action_links( $links ) {
+	foreach ( $links as $link ) {
+		if ( stripos( $link, '>Settings<' ) !== false ) {
+			return $links;
+		}
+	}
 	$settings_link = '<a href="options-general.php?page=xophz-compass-freshmints">' . __( 'Settings', 'xophz-compass-freshmints' ) . '</a>';
-	array_unshift( $links, $settings_link );
-	return $links;
+	$new_links     = array( 'settings' => $settings_link );
+	foreach ( $links as $key => $value ) {
+		$new_links[ $key ] = $value;
+	}
+	return $new_links;
 }
 add_filter( 'plugin_action_links_' . plugin_basename( __FILE__ ), 'xophz_compass_freshmints_action_links' );
