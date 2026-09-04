@@ -4,10 +4,33 @@ class Xophz_Compass_Freshmints_Public {
 
 	private $plugin_name;
 	private $version;
+	protected $dev_proxy;
 
 	public function __construct( $plugin_name, $version ) {
 		$this->plugin_name = $plugin_name;
 		$this->version     = $version;
+
+		if ( class_exists( 'Xophz_Compass_Dev_Proxy' ) ) {
+			$this->dev_proxy = new Xophz_Compass_Dev_Proxy( array(
+				'slug'                 => 'fresh-mints',
+				'default_slug'         => 'fresh-mints',
+				'dev_port'             => 8091,
+				'query_var'            => 'xophz_compass_freshmints',
+				'plugin_path'          => XOPHZ_COMPASS_FRESHMINTS_PATH,
+				'plugin_url'           => XOPHZ_COMPASS_FRESHMINTS_URL,
+				'version'              => $this->version,
+				'candidate_dist_paths' => array(
+					XOPHZ_COMPASS_FRESHMINTS_PATH . 'public/dist/index.html',
+				),
+				'extra_settings'       => array(
+					'hasBombBag'   => true,
+					'hasQuestbook' => true,
+				),
+			) );
+
+			add_filter( 'xophz_compass_dev_proxy_fresh-mints_api_settings', array( $this, 'filter_api_settings' ), 10, 2 );
+			add_filter( 'xophz_compass_dev_proxy_settings', array( $this, 'filter_api_settings' ), 10, 2 );
+		}
 	}
 
 	public function register_endpoints() {
@@ -68,12 +91,10 @@ class Xophz_Compass_Freshmints_Public {
 		$isHomepage404Fallback = ( $load_mode === 'homepage' && is_404() );
 
 		if ( $isRouteMatch || $isSubdomainMatch || $isConfiguredPageMatch || $isHomepage404Fallback ) {
-			status_header( 200 );
-			$wp_query->is_404 = false;
-
-			$app_base = $this->resolve_app_base( $isRouteMatch );
-			$resolved_preview_slug = $previewSlugQuery ?: $subdomain;
-			$this->render_freshmints_shell( $app_base, $resolved_preview_slug );
+			set_query_var( 'xophz_compass_freshmints', '1' );
+			if ( $this->dev_proxy ) {
+				$this->dev_proxy->handle_template_redirect();
+			}
 			exit;
 		}
 	}
@@ -115,91 +136,32 @@ class Xophz_Compass_Freshmints_Public {
 		if ( isset( $_GET['dev'] ) ) {
 			return true;
 		}
-		return ( defined( 'WP_ENV' ) && WP_ENV === 'development' ) || ( defined( 'WP_DEBUG' ) && WP_DEBUG ) || true;
+		return ( defined( 'WP_ENV' ) && 'development' === WP_ENV ) || ( defined( 'WP_DEBUG' ) && WP_DEBUG );
 	}
 
-	private function build_user_data() {
-		$user_id = get_current_user_id();
-		if ( $user_id <= 0 ) {
-			return null;
+	public function filter_api_settings( array $payload, string $slug ): array {
+		if ( 'fresh-mints' !== $slug && 'freshmints' !== $slug ) {
+			return $payload;
 		}
-		$u = wp_get_current_user();
-		return array(
-			'id'           => 'wp-' . $user_id,
-			'username'     => $u->user_login,
-			'email'        => $u->user_email,
-			'fullName'     => $u->display_name ?: $u->user_login,
-			'avatarUrl'    => get_avatar_url( $user_id ) ?: '',
-			'role'         => in_array( 'administrator', (array) $u->roles, true ) ? 'admin' : 'user',
-			'registeredAt' => strtotime( $u->user_registered ) * 1000,
-		);
+
+		global $wp_query;
+		$isRouteMatch     = isset( $wp_query->query_vars['xophz_compass_freshmints'] );
+		$previewSlugQuery = $wp_query->query_vars['fm_preview_slug'] ?? null;
+		$subdomain        = $this->resolve_subdomain();
+		$preview_slug     = $previewSlugQuery ?: $subdomain;
+
+		$app_base = $this->resolve_app_base( $isRouteMatch );
+		$app_base_slash = $app_base ? '/' . trim( $app_base, '/' ) . '/' : '/';
+
+		$payload['appBase']      = $app_base_slash;
+		$payload['previewSlug']  = $preview_slug ? sanitize_title( $preview_slug ) : '';
+		$payload['hasBombBag']   = true;
+		$payload['hasQuestbook'] = true;
+
+		return $payload;
 	}
 
-	private function render_freshmints_shell( $app_base, $preview_slug = null ) {
-		$is_dev          = $this->is_dev_mode();
-		$wp_host         = wp_parse_url( home_url(), PHP_URL_HOST );
-		$vite_port       = '8091';
-		$vite_url        = '//' . $wp_host . ':' . $vite_port;
-		$app_base_slash  = $app_base ? '/' . trim( $app_base, '/' ) . '/' : '/';
-		$nonce           = wp_create_nonce( 'wp_rest' );
-		$user_id         = get_current_user_id();
-		$user_data       = $this->build_user_data();
-		$clean_preview_slug = $preview_slug ? sanitize_title( $preview_slug ) : '';
-
-		$wp_api_settings = "<script>window.wpApiSettings = { root: '" . esc_url_raw( rest_url() ) . "', nonce: '" . $nonce . "', pluginUrl: '" . esc_url_raw( XOPHZ_COMPASS_FRESHMINTS_URL ) . "', version: '" . esc_js( $this->version ) . "', userId: " . $user_id . ", currentUser: " . wp_json_encode( $user_data ) . ", appBase: '" . esc_js( $app_base_slash ) . "', previewSlug: '" . esc_js( $clean_preview_slug ) . "', hasBombBag: true, hasQuestbook: true };</script>";
-
-		if ( $is_dev ) {
-			$dev_hosts = array( 'compass', 'node', 'w4-node', 'w4-freshmints-node', 'host.docker.internal', '127.0.0.1', 'localhost' );
-			$dev_html  = false;
-			foreach ( $dev_hosts as $host ) {
-				$context  = stream_context_create( array( 'http' => array( 'timeout' => 1 ) ) );
-				$dev_html = @file_get_contents( "http://{$host}:{$vite_port}/", false, $context );
-				if ( $dev_html ) {
-					break;
-				}
-			}
-
-			if ( $dev_html ) {
-				// Rewrite relative src/href/import for dev server
-				$dev_html = str_replace( 'src="/', 'src="' . $vite_url . '/', $dev_html );
-				$dev_html = str_replace( 'href="/', 'href="' . $vite_url . '/', $dev_html );
-				$dev_html = str_replace( 'import("/', 'import("' . $vite_url . '/', $dev_html );
-				$dev_html = str_replace( 'from "/', 'from="' . $vite_url . '/', $dev_html );
-				$dev_html = str_replace( "from '/", "from '" . $vite_url . "/", $dev_html );
-
-				// Inject Vite client if not present
-				if ( strpos( $dev_html, '/@vite/client' ) === false ) {
-					$vite_client = '<script type="module" src="' . esc_url( $vite_url ) . '/@vite/client"></script>';
-					$dev_html    = str_replace( '</head>', $vite_client . "\n</head>", $dev_html );
-				}
-
-				$dev_html = str_replace( '</head>', $wp_api_settings . "\n</head>", $dev_html );
-
-				echo $dev_html;
-				exit;
-			}
-		}
-
-		// Production Mode: Load static build output
-		$index_file = XOPHZ_COMPASS_FRESHMINTS_PATH . 'public/dist/index.html';
-
-		if ( file_exists( $index_file ) ) {
-			$html     = file_get_contents( $index_file );
-			$dist_url = XOPHZ_COMPASS_FRESHMINTS_URL . 'public/dist/';
-
-			// Rewrite assets paths
-			$html = str_replace( '"/assets/', '"' . $dist_url . 'assets/', $html );
-			$html = str_replace( "'/assets/", "'" . $dist_url . "assets/", $html );
-			$html = str_replace( '"/vite.svg"', '"' . $dist_url . 'vite.svg"', $html );
-
-			// Inject WP API Settings
-			$html = str_replace( '</head>', $wp_api_settings . "\n</head>", $html );
-
-			echo $html;
-			exit;
-		} else {
-			echo '<h2>Fresh Mints build output not found.</h2><p>Please run <code>pnpm build:freshmints</code> in the COMPASS root directory.</p>';
-			exit;
-		}
+	public function get_dev_proxy() {
+		return $this->dev_proxy;
 	}
 }

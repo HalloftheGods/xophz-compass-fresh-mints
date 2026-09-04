@@ -93,11 +93,7 @@ class Freshmints_API {
 	}
 
 	public function check_permissions() {
-		// Allow logged in users or open access with valid WP rest nonce
-		if ( is_user_logged_in() ) {
-			return true;
-		}
-		return true; // Graceful fallback
+		return current_user_can( 'manage_options' );
 	}
 
 
@@ -2273,7 +2269,7 @@ Return JSON strictly matching this structure:
 			'email'        => $user->user_email,
 			'fullName'     => $user->display_name ?: $user->user_login,
 			'avatarUrl'    => get_avatar_url( $user->ID ) ?: '',
-			'role'         => in_array( 'administrator', (array) $user->roles, true ) ? 'admin' : 'rep',
+			'role'         => user_can( $user, 'manage_options' ) ? 'admin' : 'rep',
 			'roles'        => (array) $user->roles,
 			'registeredAt' => strtotime( $user->user_registered ) * 1000,
 		);
@@ -2315,7 +2311,7 @@ Return JSON strictly matching this structure:
 				'email'        => $u->user_email,
 				'fullName'     => $u->display_name ?: $u->user_login,
 				'avatarUrl'    => get_avatar_url( $user_id ) ?: '',
-				'role'         => in_array( 'administrator', (array) $u->roles, true ) ? 'admin' : 'rep',
+				'role'         => current_user_can( 'manage_options' ) ? 'admin' : 'rep',
 				'roles'        => (array) $u->roles,
 				'registeredAt' => strtotime( $u->user_registered ) * 1000,
 			);
