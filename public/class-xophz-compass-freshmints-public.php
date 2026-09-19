@@ -10,6 +10,12 @@ class Xophz_Compass_Freshmints_Public {
 		$this->plugin_name = $plugin_name;
 		$this->version     = $version;
 
+		add_filter( 'option_xophz_compass_freshmints_load_mode', array( $this, 'filter_load_mode_for_domain' ) );
+		add_filter( 'option_xophz_compass_fresh_mints_load_mode', array( $this, 'filter_load_mode_for_domain' ) );
+		add_filter( 'option_xophz_compass_fresh_mints_custom_slug', function( $val ) {
+			return get_option( 'xophz_compass_freshmints_custom_slug', $val ?: 'fresh-mints' );
+		} );
+
 		if ( class_exists( 'Xophz_Compass_Dev_Proxy' ) ) {
 			$this->dev_proxy = new Xophz_Compass_Dev_Proxy( array(
 				'slug'                 => 'fresh-mints',
@@ -72,6 +78,25 @@ class Xophz_Compass_Freshmints_Public {
 		return null;
 	}
 
+	/**
+	 * Detect if current request is arriving from a Fresh Mints domain or subdomain.
+	 */
+	public function is_freshmints_domain(): bool {
+		$host = isset( $_SERVER['HTTP_HOST'] ) ? strtolower( trim( (string) $_SERVER['HTTP_HOST'] ) ) : '';
+		if ( strpos( $host, 'freshmints' ) !== false ) {
+			return true;
+		}
+		$home = strtolower( (string) wp_parse_url( home_url(), PHP_URL_HOST ) );
+		return strpos( $home, 'freshmints' ) !== false;
+	}
+
+	public function filter_load_mode_for_domain( $mode ) {
+		if ( $this->is_freshmints_domain() ) {
+			return 'homepage';
+		}
+		return $mode ?: get_option( 'xophz_compass_freshmints_load_mode', 'routes_only' );
+	}
+
 	public function template_redirect() {
 		global $wp_query;
 
@@ -81,6 +106,7 @@ class Xophz_Compass_Freshmints_Public {
 			return;
 		}
 
+		$isDomainMatch         = $this->is_freshmints_domain();
 		$isRouteMatch          = isset( $wp_query->query_vars['xophz_compass_freshmints'] );
 		$previewSlugQuery      = $wp_query->query_vars['fm_preview_slug'] ?? null;
 		$subdomain             = $this->resolve_subdomain();
@@ -88,9 +114,13 @@ class Xophz_Compass_Freshmints_Public {
 		$isConfiguredPageMatch = $this->is_configured_page();
 
 		$load_mode             = get_option( 'xophz_compass_freshmints_load_mode', 'routes_only' );
-		$isHomepage404Fallback = ( $load_mode === 'homepage' && is_404() );
+		$isHomepage404Fallback = ( ( $load_mode === 'homepage' || $isDomainMatch ) && is_404() );
 
-		if ( $isRouteMatch || $isSubdomainMatch || $isConfiguredPageMatch || $isHomepage404Fallback ) {
+		if ( $isDomainMatch || $isRouteMatch || $isSubdomainMatch || $isConfiguredPageMatch || $isHomepage404Fallback ) {
+			status_header( 200 );
+			if ( $wp_query ) {
+				$wp_query->is_404 = false;
+			}
 			set_query_var( 'xophz_compass_freshmints', '1' );
 			if ( $this->dev_proxy ) {
 				$this->dev_proxy->handle_template_redirect();
@@ -110,6 +140,10 @@ class Xophz_Compass_Freshmints_Public {
 	}
 
 	private function resolve_app_base( $isRouteMatch ) {
+		if ( $this->is_freshmints_domain() ) {
+			return '';
+		}
+
 		if ( $isRouteMatch ) {
 			$load_mode   = get_option( 'xophz_compass_freshmints_load_mode', 'routes_only' );
 			$custom_slug = get_option( 'xophz_compass_freshmints_custom_slug', 'fresh-mints' );
@@ -150,8 +184,12 @@ class Xophz_Compass_Freshmints_Public {
 		$subdomain        = $this->resolve_subdomain();
 		$preview_slug     = $previewSlugQuery ?: $subdomain;
 
-		$app_base = $this->resolve_app_base( $isRouteMatch );
-		$app_base_slash = $app_base ? '/' . trim( $app_base, '/' ) . '/' : '/';
+		if ( $this->is_freshmints_domain() ) {
+			$app_base_slash = '/';
+		} else {
+			$app_base       = $this->resolve_app_base( $isRouteMatch );
+			$app_base_slash = $app_base ? '/' . trim( $app_base, '/' ) . '/' : '/';
+		}
 
 		$payload['appBase']      = $app_base_slash;
 		$payload['previewSlug']  = $preview_slug ? sanitize_title( $preview_slug ) : '';

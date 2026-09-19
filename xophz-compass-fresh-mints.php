@@ -1,6 +1,7 @@
 <?php
 /**
  * Plugin Name:       Xophz Fresh Mints
+ * Plugin URI:        https://freshmints.worldwidewebwork.com
  * Description:       Turnkey lead discovery, license registry audit, skip-tracing, and practice website launcher platform integrated with Questbook CRM and WP Connectors API.
  * Version:           26.9.17
  * Author:            Hall of the Gods, Inc.
@@ -33,7 +34,7 @@ function run_xophz_compass_freshmints() {
 	$public = new Xophz_Compass_Freshmints_Public( 'xophz-compass-freshmints', XOPHZ_COMPASS_FRESHMINTS_VERSION );
 	add_action( 'init', array( $public, 'register_endpoints' ) );
 	add_filter( 'query_vars', array( $public, 'register_query_vars' ) );
-	add_action( 'template_redirect', array( $public, 'template_redirect' ) );
+	add_action( 'template_redirect', array( $public, 'template_redirect' ), 5 );
 
 	// REST API Controller
 	add_action( 'rest_api_init', function() {
