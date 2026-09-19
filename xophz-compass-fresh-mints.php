@@ -3,7 +3,7 @@
  * Plugin Name:       Xophz Fresh Mints
  * Plugin URI:        https://freshmints.worldwidewebwork.com
  * Description:       Turnkey lead discovery, license registry audit, skip-tracing, and practice website launcher platform integrated with Questbook CRM and WP Connectors API.
- * Version:           26.9.17
+ * Version:           26.9.19-304
  * Author:            Hall of the Gods, Inc.
  * Category:          Command Deck
  * Group:             Ecosystem
@@ -14,7 +14,7 @@ if ( ! defined( 'WPINC' ) ) {
 	die;
 }
 
-define( 'XOPHZ_COMPASS_FRESHMINTS_VERSION', '26.9.17' );
+define( 'XOPHZ_COMPASS_FRESHMINTS_VERSION', '26.9.19-304' );
 define( 'XOPHZ_COMPASS_FRESHMINTS_PATH', plugin_dir_path( __FILE__ ) );
 define( 'XOPHZ_COMPASS_FRESHMINTS_URL', plugin_dir_url( __FILE__ ) );
 
