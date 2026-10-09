@@ -24,7 +24,7 @@ class Freshmints_Social_Provider_Youtube {
 	const SKIPPABLE_CAUSES   = array( 'commentsDisabled', 'videoNotFound' );
 
 	public static function fetch_posts( array $rule ): array {
-		$api_key = Freshmints_Social_Credentials::get( 'youtube_api_key' );
+		$api_key = Freshmints_Connectors::get_key( 'youtube_api_key' );
 		if ( $api_key === '' ) {
 			return self::failed( 'YouTube is not configured.' );
 		}

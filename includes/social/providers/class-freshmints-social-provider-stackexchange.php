@@ -29,7 +29,7 @@ class Freshmints_Social_Provider_Stackexchange {
 			return self::failed( "Stack Exchange asked for a pause; try again in {$pause} seconds." );
 		}
 
-		$key   = Freshmints_Social_Credentials::get( 'stackexchange_key' );
+		$key   = Freshmints_Connectors::get_key( 'stackexchange_api_key' );
 		$posts = array();
 		foreach ( array_slice( $keywords, 0, self::MAX_REQUESTS ) as $keyword ) {
 			$result = self::search( $keyword, $key );

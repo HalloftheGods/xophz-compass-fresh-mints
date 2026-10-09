@@ -21,9 +21,9 @@ define( 'XOPHZ_COMPASS_FRESHMINTS_URL', plugin_dir_url( __FILE__ ) );
 // Autoload plugin classes
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'admin/class-xophz-compass-freshmints-admin.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'public/class-xophz-compass-freshmints-public.php';
+require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/class-freshmints-connectors.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/class-freshmints-api.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/registry/class-freshmints-registry-producers.php';
-require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/class-freshmints-social-credentials.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-freshmints-social-provider-reddit.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-freshmints-social-provider-stackexchange.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-freshmints-social-provider-youtube.php';
@@ -97,6 +97,40 @@ function run_xophz_compass_freshmints() {
 					),
 				)
 			);
+			if ( ! wp_is_connector_registered( 'youtube_api_key' ) ) {
+				$registry->register(
+					'youtube_api_key',
+					array(
+						'name'           => 'YouTube Data API Key',
+						'description'    => 'API key for the YouTube Data API (powers YouTube comment search in Social Radar).',
+						'type'           => 'api_key',
+						'authentication' => array(
+							'method'          => 'api_key',
+							'setting_name'    => 'compass_youtube_api_key',
+							'constant_name'   => 'COMPASS_YOUTUBE_API_KEY',
+							'env_var_name'    => 'COMPASS_YOUTUBE_API_KEY',
+							'credentials_url' => 'https://console.cloud.google.com/apis/credentials',
+						),
+					)
+				);
+			}
+			if ( ! wp_is_connector_registered( 'stackexchange_api_key' ) ) {
+				$registry->register(
+					'stackexchange_api_key',
+					array(
+						'name'           => 'Stack Exchange API Key',
+						'description'    => 'Optional API key for Stack Exchange (raises the Social Radar quota from 300 to 10,000 requests a day).',
+						'type'           => 'api_key',
+						'authentication' => array(
+							'method'          => 'api_key',
+							'setting_name'    => 'compass_stackexchange_api_key',
+							'constant_name'   => 'COMPASS_STACKEXCHANGE_API_KEY',
+							'env_var_name'    => 'COMPASS_STACKEXCHANGE_API_KEY',
+							'credentials_url' => 'https://stackapps.com/apps/oauth/register',
+						),
+					)
+				);
+			}
 		}
 	} );
 }

@@ -101,72 +101,34 @@ class Freshmints_API {
 	 * Retrieve API keys for various services.
 	 */
 	private function get_api_key( $service ) {
-		$keys = array(
-			'yelp'   => array( 'yelp_api_key', 'compass_yelp_api_key', 'YELP_API_KEY' ),
-			'google' => array( 'google_places_api_key', 'compass_google_places_api_key', 'GOOGLE_PLACES_API_KEY' ),
+		$connector_ids = array(
+			'yelp'   => 'yelp_api_key',
+			'google' => 'google_places_api_key',
 		);
 
-		if ( isset( $keys[ $service ] ) ) {
-			foreach ( $keys[ $service ] as $k ) {
-				$val = get_option( $k, '' );
-				if ( ! empty( $val ) ) {
-					return $val;
-				}
-				if ( defined( $k ) && ! empty( constant( $k ) ) ) {
-					return constant( $k );
-				}
-				if ( ! empty( $_ENV[ $k ] ) ) {
-					return $_ENV[ $k ];
-				}
-			}
+		if ( ! isset( $connector_ids[ $service ] ) ) {
+			return '';
 		}
-		return '';
+
+		return Freshmints_Connectors::get_key( $connector_ids[ $service ] );
 	}
 
 	/**
 	 * Retrieve the API key for Gemini using WP Connectors API and ecosystem settings.
 	 */
 	private function get_gemini_api_key() {
-		if ( function_exists( 'wp_get_connectors' ) ) {
-			$connectors = wp_get_connectors();
-			if ( ! empty( $connectors['google']['authentication']['setting_name'] ) ) {
-				$api_key = get_option( $connectors['google']['authentication']['setting_name'], '' );
-				if ( ! empty( $api_key ) ) {
-					return $api_key;
-				}
-			}
-			if ( ! empty( $connectors['google_gemini_api_key']['authentication']['setting_name'] ) ) {
-				$api_key = get_option( $connectors['google_gemini_api_key']['authentication']['setting_name'], '' );
-				if ( ! empty( $api_key ) ) {
-					return $api_key;
-				}
+		foreach ( array( 'google', 'google_gemini_api_key' ) as $connector_id ) {
+			$api_key = Freshmints_Connectors::get_key( $connector_id );
+			if ( $api_key !== '' ) {
+				return $api_key;
 			}
 		}
 
-		$keys = array(
-			'connectors_ai_google_api_key',
-			'ai_google_api_key',
-			'compass_gemini_api_key',
-			'xophz_gemini_api_key',
-		);
-		foreach ( $keys as $k ) {
-			$val = get_option( $k, '' );
-			if ( ! empty( $val ) ) {
-				return $val;
-			}
-		}
-
-		if ( defined( 'GEMINI_API_KEY' ) && ! empty( GEMINI_API_KEY ) ) {
-			return GEMINI_API_KEY;
-		}
-		if ( ! empty( $_ENV['GEMINI_API_KEY'] ) ) {
-			return $_ENV['GEMINI_API_KEY'];
-		}
-		if ( ! empty( getenv( 'GEMINI_API_KEY' ) ) ) {
-			return getenv( 'GEMINI_API_KEY' );
-		}
-
-		return '';
+		// Kept on purpose: the Docker stack injects GEMINI_API_KEY into the container environment
+		// (.env -> docker-compose.yml) and it is in use on this site. It is not a name the core
+		// `google` connector declares (that is GOOGLE_API_KEY), so the resolver cannot see it.
+		$env_key = getenv( 'GEMINI_API_KEY' );
+		return is_string( $env_key ) ? trim( $env_key ) : '';
 	}
 
 	/**
