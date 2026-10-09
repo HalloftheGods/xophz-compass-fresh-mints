@@ -23,7 +23,10 @@ require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'admin/class-xophz-compass-freshmin
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'public/class-xophz-compass-freshmints-public.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/class-freshmints-api.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/registry/class-freshmints-registry-producers.php';
+require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/class-freshmints-social-credentials.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-freshmints-social-provider-reddit.php';
+require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-freshmints-social-provider-stackexchange.php';
+require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-freshmints-social-provider-youtube.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/class-freshmints-social-rest.php';
 
 function run_xophz_compass_freshmints() {

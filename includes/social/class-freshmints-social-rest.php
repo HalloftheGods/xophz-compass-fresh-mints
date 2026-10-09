@@ -15,6 +15,11 @@ if ( ! defined( 'WPINC' ) ) {
 class Freshmints_Social_Rest {
 
 	const REST_NAMESPACE = 'xophz-freshmints/v1';
+	const PROVIDERS      = array(
+		'reddit'         => 'Freshmints_Social_Provider_Reddit',
+		'stack_exchange' => 'Freshmints_Social_Provider_Stackexchange',
+		'youtube'        => 'Freshmints_Social_Provider_Youtube',
+	);
 
 	public function register_routes() {
 		register_rest_route( self::REST_NAMESPACE, '/social/fetch', array(
@@ -35,14 +40,16 @@ class Freshmints_Social_Rest {
 		$body     = is_array( $body ) ? $body : array();
 		$platform = isset( $body['platform'] ) && is_string( $body['platform'] ) ? $body['platform'] : '';
 
-		if ( $platform !== 'reddit' ) {
+		if ( ! isset( self::PROVIDERS[ $platform ] ) ) {
 			return rest_ensure_response( array(
 				'status' => 'failed',
-				'reason' => 'Unsupported platform for the server-side relay.',
+				'reason' => 'Unsupported platform.',
 			) );
 		}
 
-		return rest_ensure_response( Freshmints_Social_Provider_Reddit::fetch_posts( array(
+		$provider = self::PROVIDERS[ $platform ];
+
+		return rest_ensure_response( $provider::fetch_posts( array(
 			'keywords'       => $body['keywords'] ?? array(),
 			'targetChannels' => $body['targetChannels'] ?? array(),
 		) ) );
