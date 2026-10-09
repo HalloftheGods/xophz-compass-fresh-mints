@@ -1610,6 +1610,20 @@ Return JSON strictly matching this structure:
 			}
 		}
 
+		if ( $profession === 'insurance' && $state === 'TX' ) {
+			$producer_leads = Freshmints_Registry_Producers::fetch( $state, $limit, (string) $date_window );
+
+			if ( ! empty( $producer_leads ) ) {
+				return rest_ensure_response( array(
+					'success'        => true,
+					'source'         => Freshmints_Registry_Producers::SOURCE_LABEL,
+					'leads'          => $producer_leads,
+					'groundingNotes' => "Retrieved " . count( $producer_leads ) . " live verified life insurance producer records{$window_label} from the Texas Department of Insurance open data portal.",
+					'totalFound'     => count( $producer_leads ),
+				) );
+			}
+		}
+
 		// 3. Zero Mock / Zero Synthetic Fallback: Return genuine empty state
 		$sourceLabel = $this->get_regulatory_board_name( $profession, $state );
 
@@ -1673,7 +1687,7 @@ Return JSON strictly matching this structure:
 	/**
 	 * Estimated deal value helper.
 	 */
-	private function get_estimated_deal_value( $profession ) {
+	public function get_estimated_deal_value( $profession ) {
 		$values = array(
 			'financial_advisor' => 3950,
 			'finance'           => 3950,
