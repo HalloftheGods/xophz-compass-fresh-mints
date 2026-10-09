@@ -22,6 +22,8 @@ define( 'XOPHZ_COMPASS_FRESHMINTS_URL', plugin_dir_url( __FILE__ ) );
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'admin/class-xophz-compass-freshmints-admin.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'public/class-xophz-compass-freshmints-public.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/class-freshmints-api.php';
+require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-freshmints-social-provider-reddit.php';
+require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/class-freshmints-social-rest.php';
 
 function run_xophz_compass_freshmints() {
 	$admin = new Xophz_Compass_Freshmints_Admin( 'xophz-compass-freshmints', XOPHZ_COMPASS_FRESHMINTS_VERSION );
@@ -40,6 +42,9 @@ function run_xophz_compass_freshmints() {
 	add_action( 'rest_api_init', function() {
 		$api = new Freshmints_API();
 		$api->register_routes();
+
+		$social = new Freshmints_Social_Rest();
+		$social->register_routes();
 	} );
 
 	// Register with Event Horizon / YouMeOS Spark Registry
