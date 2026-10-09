@@ -19,6 +19,10 @@ class Freshmints_Connectors {
 			return '';
 		}
 
+		if ( ! wp_is_connector_registered( $connector_id ) ) {
+			return '';
+		}
+
 		$connector = wp_get_connector( $connector_id );
 		if ( ! is_array( $connector ) ) {
 			return '';

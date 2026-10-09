@@ -954,7 +954,7 @@ Return JSON strictly matching this structure:
 		if ( empty( $google_key ) ) {
 			return new WP_Error(
 				'missing_google_api_key',
-				'Google Places API key is not configured. Please add compass_google_places_api_key in WordPress options or .env.',
+				'Google Places API key is not configured. Set the Google Places API key under Settings > Connectors.',
 				array( 'status' => 400 )
 			);
 		}
