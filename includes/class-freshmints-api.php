@@ -1367,8 +1367,13 @@ Return JSON strictly matching this structure:
 						continue;
 					}
 
+					$npi_num = trim( (string) ( $item['number'] ?? '' ) );
+					if ( empty( $npi_num ) ) {
+						continue;
+					}
+
 					$taxonomy      = $item['taxonomies'][0] ?? array();
-					$licenseNumber = ! empty( $taxonomy['license'] ) ? (string) $taxonomy['license'] : ( 'NPI-' . (string) ( $item['number'] ?? '' ) );
+					$licenseNumber = ! empty( $taxonomy['license'] ) ? (string) $taxonomy['license'] : ( 'NPI-' . $npi_num );
 					$credential    = ! empty( $basic['credential'] ) ? trim( $basic['credential'] ) : ( $taxonomy['desc'] ?? 'Licensed Practitioner' );
 					$phone         = trim( $addr['telephone_number'] ?? '' );
 					$city          = ucwords( strtolower( trim( $addr['city'] ?? '' ) ) );
@@ -1376,11 +1381,11 @@ Return JSON strictly matching this structure:
 					$isRecent      = ( $issueTimestamp !== false ) ? ( ( time() - $issueTimestamp ) <= ( 365 * 86400 ) ) : true;
 					$licenseStatus = $isRecent ? 'Active Board Pass' : 'Licensed Practitioner';
 
-					$previewSlug   = $this->generate_preview_slug( $fullName, 'nppes-' . ( $item['number'] ?? '' ) );
+					$previewSlug   = $this->generate_preview_slug( $fullName, 'nppes-' . $npi_num );
 					$dealVal       = $this->get_estimated_deal_value( $profession );
 
 					$leads[] = array(
-						'id'                => 'nppes-' . ( $item['number'] ?? uniqid() ),
+						'id'                => 'nppes-' . $npi_num,
 						'fullName'          => $fullName,
 						'profession'        => $profession,
 						'professionTitle'   => $credential,
@@ -1458,7 +1463,10 @@ Return JSON strictly matching this structure:
 						continue;
 					}
 
-					$crdNumber   = (string) ( $source['ind_source_id'] ?? '' );
+					$crdNumber   = trim( (string) ( $source['ind_source_id'] ?? '' ) );
+					if ( empty( $crdNumber ) ) {
+						continue;
+					}
 					$emp         = $source['ind_current_employments'][0] ?? array();
 					$firmName    = $emp['firm_name'] ?? 'Registered Investment Advisory';
 					$city        = ucwords( strtolower( trim( $emp['branch_city'] ?? '' ) ) );
@@ -1472,7 +1480,7 @@ Return JSON strictly matching this structure:
 						'profession'        => 'financial_advisor',
 						'professionTitle'   => 'Certified Financial Planner (CRD #' . $crdNumber . ')',
 						'state'             => $state,
-						'city'              => ! empty( $city ) ? $city : $this->get_default_city_for_state( $state ),
+						'city'              => $city,
 						'licenseNumber'     => 'CRD-' . $crdNumber,
 						'issueDate'         => $issueDate,
 						'collegeOrSchool'   => $firmName,
@@ -1484,7 +1492,7 @@ Return JSON strictly matching this structure:
 						'websiteConfig'     => array(
 							'previewSlug'     => $previewSlug,
 							'heroHeadline'    => "{$fullName} - Certified Financial Planner",
-							'heroSubheadline' => "Fiduciary Wealth & Retirement Advisory in {$city}, {$state}.",
+							'heroSubheadline' => ! empty( $city ) ? "Fiduciary Wealth & Retirement Advisory in {$city}, {$state}." : "Fiduciary Wealth & Retirement Advisory in {$state}.",
 							'tagline'         => "Beacon Wealth & Fiduciary Advisors",
 							'previewUrl'      => home_url( "/fresh-mints/#/preview/{$previewSlug}" ),
 							'offerPrice'      => $dealVal,
@@ -1549,8 +1557,13 @@ Return JSON strictly matching this structure:
 								continue;
 							}
 
-							$lic_num     = (string) ( $row['license_number'] ?? ( 'NY-' . uniqid() ) );
-							$city        = ucwords( strtolower( trim( $row['city'] ?? 'New York' ) ) );
+							$raw_lic = trim( (string) ( $row['license_number'] ?? '' ) );
+							if ( empty( $raw_lic ) ) {
+								continue;
+							}
+
+							$lic_num     = ( stripos( $raw_lic, 'ny-' ) === 0 ) ? substr( $raw_lic, 3 ) : $raw_lic;
+							$city        = ucwords( strtolower( trim( $row['city'] ?? '' ) ) );
 							$gradYear    = (int) substr( $issueDate, 0, 4 );
 							$previewSlug = $this->generate_preview_slug( $fullName, 'ny-' . $lic_num );
 							$dealVal     = $this->get_estimated_deal_value( $profession );
@@ -1573,7 +1586,7 @@ Return JSON strictly matching this structure:
 								'websiteConfig'     => array(
 									'previewSlug'     => $previewSlug,
 									'heroHeadline'    => "{$fullName} - {$profession}",
-									'heroSubheadline' => "Professional services in {$city}, NY.",
+									'heroSubheadline' => ! empty( $city ) ? "Professional services in {$city}, NY." : "Professional services in NY.",
 									'tagline'         => "Verified New York Practice",
 									'previewUrl'      => home_url( "/fresh-mints/#/preview/{$previewSlug}" ),
 									'offerPrice'      => $dealVal,
