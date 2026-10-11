@@ -29,6 +29,7 @@ require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-fr
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-freshmints-social-provider-youtube.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/class-freshmints-social-rest.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/class-freshmints-social-dispatch-rest.php';
+require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/crm/class-freshmints-crm-webhook-rest.php';
 
 function run_xophz_compass_freshmints() {
 	$admin = new Xophz_Compass_Freshmints_Admin( 'xophz-compass-freshmints', XOPHZ_COMPASS_FRESHMINTS_VERSION );
@@ -53,6 +54,9 @@ function run_xophz_compass_freshmints() {
 
 		$dispatch = new Freshmints_Social_Dispatch_Rest();
 		$dispatch->register_routes();
+
+		$crm_webhook = new Freshmints_Crm_Webhook_Rest();
+		$crm_webhook->register_routes();
 	} );
 
 	// Register with Event Horizon / YouMeOS Spark Registry
@@ -147,6 +151,22 @@ function run_xophz_compass_freshmints() {
 							'setting_name'  => 'compass_social_dispatch_webhook_url',
 							'constant_name' => 'COMPASS_SOCIAL_DISPATCH_WEBHOOK_URL',
 							'env_var_name'  => 'COMPASS_SOCIAL_DISPATCH_WEBHOOK_URL',
+						),
+					)
+				);
+			}
+			if ( ! wp_is_connector_registered( Freshmints_Crm_Webhook_Rest::CONNECTOR_ID ) ) {
+				$registry->register(
+					Freshmints_Crm_Webhook_Rest::CONNECTOR_ID,
+					array(
+						'name'           => 'CRM Webhook URL',
+						'description'    => 'Incoming webhook URL (Zapier, Make, HubSpot or GoHighLevel) that receives the leads you send from Fresh Mints. The URL is a credential: anyone holding it can write into the CRM, so it is stored here and used only by the server.',
+						'type'           => 'api_key',
+						'authentication' => array(
+							'method'        => 'api_key',
+							'setting_name'  => 'compass_crm_webhook_url',
+							'constant_name' => 'COMPASS_CRM_WEBHOOK_URL',
+							'env_var_name'  => 'COMPASS_CRM_WEBHOOK_URL',
 						),
 					)
 				);
