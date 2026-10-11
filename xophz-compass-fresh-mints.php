@@ -28,6 +28,7 @@ require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-fr
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-freshmints-social-provider-stackexchange.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-freshmints-social-provider-youtube.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/class-freshmints-social-rest.php';
+require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/class-freshmints-social-dispatch-rest.php';
 
 function run_xophz_compass_freshmints() {
 	$admin = new Xophz_Compass_Freshmints_Admin( 'xophz-compass-freshmints', XOPHZ_COMPASS_FRESHMINTS_VERSION );
@@ -49,6 +50,9 @@ function run_xophz_compass_freshmints() {
 
 		$social = new Freshmints_Social_Rest();
 		$social->register_routes();
+
+		$dispatch = new Freshmints_Social_Dispatch_Rest();
+		$dispatch->register_routes();
 	} );
 
 	// Register with Event Horizon / YouMeOS Spark Registry
@@ -127,6 +131,22 @@ function run_xophz_compass_freshmints() {
 							'constant_name'   => 'COMPASS_STACKEXCHANGE_API_KEY',
 							'env_var_name'    => 'COMPASS_STACKEXCHANGE_API_KEY',
 							'credentials_url' => 'https://stackapps.com/apps/oauth/register',
+						),
+					)
+				);
+			}
+			if ( ! wp_is_connector_registered( Freshmints_Social_Dispatch_Rest::CONNECTOR_ID ) ) {
+				$registry->register(
+					Freshmints_Social_Dispatch_Rest::CONNECTOR_ID,
+					array(
+						'name'           => 'Social Dispatch Webhook URL',
+						'description'    => 'Incoming webhook URL (Slack, Discord or Zapier) that receives each reply you dispatch from Social Radar. The URL is a credential: anyone holding it can post to the channel, so it is stored here and used only by the server.',
+						'type'           => 'api_key',
+						'authentication' => array(
+							'method'        => 'api_key',
+							'setting_name'  => 'compass_social_dispatch_webhook_url',
+							'constant_name' => 'COMPASS_SOCIAL_DISPATCH_WEBHOOK_URL',
+							'env_var_name'  => 'COMPASS_SOCIAL_DISPATCH_WEBHOOK_URL',
 						),
 					)
 				);

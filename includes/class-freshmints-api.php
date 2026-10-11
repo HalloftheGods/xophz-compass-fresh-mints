@@ -140,7 +140,9 @@ class Freshmints_API {
 			return new WP_Error( 'missing_gemini_key', 'Gemini API key is not configured in WP Connectors or environment.' );
 		}
 
-		$endpoint = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$api_key}";
+		// The key rides in the x-goog-api-key header, never in the URL, so it cannot reach
+		// server, proxy or access logs through the request line.
+		$endpoint = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent";
 
 		$payload = array(
 			'contents' => array(
@@ -171,7 +173,10 @@ class Freshmints_API {
 		}
 
 		$response = wp_remote_post( $endpoint, array(
-			'headers' => array( 'Content-Type' => 'application/json' ),
+			'headers' => array(
+				'Content-Type'   => 'application/json',
+				'x-goog-api-key' => $api_key,
+			),
 			'body'    => wp_json_encode( $payload ),
 			'timeout' => 60,
 		) );
