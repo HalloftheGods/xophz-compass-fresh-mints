@@ -22,6 +22,11 @@
  *
  * Texas has no separate annuity qualification, so annuity authority rides on
  * the life qualifications listed in Freshmints_Registry_Producer_Rows::LIFE_QUALIFICATIONS.
+ *
+ * State 'IA' is served by Freshmints_Registry_Producers_IA (Iowa Insurance Division, a different dataset
+ * with its own access method). fetch() routes by state and last_stats() reports whichever tier ran, so
+ * callers keep calling this class. supports() and describe() tell a caller which states exist and how to
+ * label them.
  */
 
 if ( ! defined( 'WPINC' ) ) {
@@ -29,6 +34,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 require_once __DIR__ . '/class-freshmints-registry-producer-rows.php';
+require_once __DIR__ . '/class-freshmints-registry-producers-ia.php';
 
 class Freshmints_Registry_Producers {
 
@@ -54,6 +60,13 @@ class Freshmints_Registry_Producers {
 		self::$last_stats = array();
 
 		$state = strtoupper( trim( $state ) );
+
+		if ( $state === Freshmints_Registry_Producers_IA::SUPPORTED_STATE ) {
+			$leads            = Freshmints_Registry_Producers_IA::fetch( $state, $limit, $date_window, $first_license_only );
+			self::$last_stats = Freshmints_Registry_Producers_IA::last_stats();
+			return $leads;
+		}
+
 		if ( $state !== self::SUPPORTED_STATE || $limit < 1 ) {
 			return array();
 		}
@@ -87,6 +100,41 @@ class Freshmints_Registry_Producers {
 	 */
 	public static function last_stats(): array {
 		return self::$last_stats;
+	}
+
+	/**
+	 * Whether fetch() has a registry for the state ('TX' or 'IA').
+	 */
+	public static function supports( string $state ): bool {
+		$state = strtoupper( trim( $state ) );
+
+		return $state === self::SUPPORTED_STATE || $state === Freshmints_Registry_Producers_IA::SUPPORTED_STATE;
+	}
+
+	/**
+	 * Labels for a response about a supported state, or an empty array for any other state:
+	 * `source` (the response's source label), `portal` (for the grounding note) and `attribution`
+	 * (text the response must carry with the data; '' when the dataset's terms ask for none).
+	 *
+	 * @return array{source?:string,portal?:string,attribution?:string}
+	 */
+	public static function describe( string $state ): array {
+		switch ( strtoupper( trim( $state ) ) ) {
+			case self::SUPPORTED_STATE:
+				return array(
+					'source'      => self::SOURCE_LABEL,
+					'portal'      => 'the Texas Department of Insurance open data portal',
+					'attribution' => '',
+				);
+			case Freshmints_Registry_Producers_IA::SUPPORTED_STATE:
+				return array(
+					'source'      => Freshmints_Registry_Producers_IA::SOURCE_LABEL,
+					'portal'      => 'the Iowa Insurance Division open data on the Iowa Data Hub',
+					'attribution' => Freshmints_Registry_Producers_IA::ATTRIBUTION,
+				);
+		}
+
+		return array();
 	}
 
 	/**
