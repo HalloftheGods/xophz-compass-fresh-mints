@@ -219,20 +219,38 @@ class Freshmints_Api_Crm extends Freshmints_Api_Controller {
 		$final_contact_id = $contact_id > 0 ? $contact_id : ( ! is_wp_error( $cpt_id ) ? $cpt_id : 0 );
 
 		// Auto-sync into Bomb Bag if setting or request flag is active
-		$auto_bomb_bag = get_option( 'xophz_compass_freshmints_auto_sync_bomb_bag', '0' );
-		$bomb_bag_res  = null;
+		$auto_bomb_bag  = get_option( 'xophz_compass_freshmints_auto_sync_bomb_bag', '0' );
+		$bomb_bag_res   = null;
+		$bomb_bag_error = null;
 		if ( $auto_bomb_bag === '1' || ! empty( $body['syncBombBag'] ) ) {
+			// The bomb-bag handler reads get_json_params(), which parses only a JSON body sent with a JSON content type.
 			$bomb_bag_req = new WP_REST_Request( 'POST', '/xophz-freshmints/v1/bomb-bag/sync' );
-			$bomb_bag_req->set_body_params( array( 'lead' => $lead ) );
+			$bomb_bag_req->set_header( 'Content-Type', 'application/json' );
+			$bomb_bag_req->set_body( wp_json_encode( array( 'lead' => $lead ) ) );
 			$bomb_bag_res = ( new Freshmints_Api_Bomb_Bag() )->handle_bomb_bag_sync( $bomb_bag_req );
+
+			// The contact is already written to Questbook by now, so a Bomb Bag failure is reported next
+			// to the CRM result instead of failing the whole sync.
+			if ( is_wp_error( $bomb_bag_res ) ) {
+				$bomb_bag_error = array(
+					'code'    => $bomb_bag_res->get_error_code(),
+					'message' => $bomb_bag_res->get_error_message(),
+				);
+				$bomb_bag_res   = null;
+			}
 		}
 
-		return rest_ensure_response( array(
+		$response = array(
 			'success'        => true,
 			'contactId'      => $final_contact_id,
 			'action'         => $action,
 			'crmMessage'     => "Successfully synced {$lead['fullName']} into Questbook CRM (ID: #{$final_contact_id}).",
 			'bombBagResult'  => $bomb_bag_res ? $bomb_bag_res->get_data() : null,
-		) );
+		);
+		if ( $bomb_bag_error ) {
+			$response['bombBagError'] = $bomb_bag_error;
+		}
+
+		return rest_ensure_response( $response );
 	}
 }
