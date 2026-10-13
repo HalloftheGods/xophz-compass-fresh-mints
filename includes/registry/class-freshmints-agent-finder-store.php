@@ -11,7 +11,8 @@
  *
  * The sync only ever INSERTs agents (INSERT IGNORE on the unique NPN). A row that exists is never rewritten,
  * delivered or not, so the identity fields keep what the first run saw. record_delivery() is the one writer
- * of the delivery columns, for the delivery task (#6024).
+ * of the delivery outcome (status, delivered_at, attempts + 1) for the HighLevel delivery (#6024); the only
+ * other write is reset_failed_attempts(), which gives failed rows their attempts back for the admin retry.
  *
  * Two columns come from the one licence row the registry builds each lead from, the person's EARLIEST LIFE
  * licence in the window: `first_issue_date` is that row's issue date (later than the person's true first
@@ -205,6 +206,80 @@ class Freshmints_Agent_Finder_Store {
 		}
 
 		return (int) $wpdb->query( $sql ) === 1;
+	}
+
+	/**
+	 * Rows the delivery still owes: pending, or failed with fewer than $max_attempts attempts. Oldest id first.
+	 * $after_id is a cursor, so one delivery pass visits each row once and a failing row is retried on the
+	 * next pass rather than over and over inside this one.
+	 *
+	 * @return array[] Agent rows (ARRAY_A).
+	 */
+	public static function deliverable_agents( int $limit, int $max_attempts, int $after_id = 0 ): array {
+		global $wpdb;
+		$table = self::agents_table();
+		$rows  = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT * FROM {$table} WHERE id > %d AND delivery_status IN ('pending','failed') AND attempts < %d ORDER BY id ASC LIMIT %d",
+				$after_id,
+				$max_attempts,
+				$limit
+			),
+			ARRAY_A
+		);
+		return is_array( $rows ) ? $rows : array();
+	}
+
+	/** How many rows deliverable_agents() would still return past the cursor. */
+	public static function count_deliverable( int $max_attempts, int $after_id = 0 ): int {
+		global $wpdb;
+		$table = self::agents_table();
+		return (int) $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT COUNT(*) FROM {$table} WHERE id > %d AND delivery_status IN ('pending','failed') AND attempts < %d",
+				$after_id,
+				$max_attempts
+			)
+		);
+	}
+
+	/**
+	 * Agents by delivery status. `exhausted` is the failed rows that reached $max_attempts: a subset of `failed`
+	 * that no automatic pass will try again.
+	 *
+	 * @return array{pending:int,failed:int,delivered:int,exhausted:int}
+	 */
+	public static function delivery_counts( int $max_attempts ): array {
+		global $wpdb;
+		$table  = self::agents_table();
+		$rows   = $wpdb->get_results(
+			$wpdb->prepare( "SELECT delivery_status AS status, COUNT(*) AS total, SUM(attempts >= %d) AS capped FROM {$table} GROUP BY delivery_status", $max_attempts ),
+			ARRAY_A
+		);
+		$counts = array( 'pending' => 0, 'failed' => 0, 'delivered' => 0, 'exhausted' => 0 );
+
+		foreach ( is_array( $rows ) ? $rows : array() as $row ) {
+			if ( isset( $counts[ $row['status'] ] ) ) {
+				$counts[ $row['status'] ] = (int) $row['total'];
+			}
+			if ( $row['status'] === 'failed' ) {
+				$counts['exhausted'] = (int) $row['capped'];
+			}
+		}
+
+		return $counts;
+	}
+
+	/**
+	 * Give every failed row its attempts back, for the admin retry that overrides the cap. Status stays `failed`
+	 * until a delivery succeeds; delivered rows are not touched.
+	 *
+	 * @return int Rows changed.
+	 */
+	public static function reset_failed_attempts(): int {
+		global $wpdb;
+		$table = self::agents_table();
+		return (int) $wpdb->query( "UPDATE {$table} SET attempts = 0 WHERE delivery_status = 'failed' AND attempts > 0" );
 	}
 
 	/**

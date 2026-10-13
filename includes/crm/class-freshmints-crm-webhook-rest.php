@@ -14,6 +14,11 @@
  *
  * Error responses carry only the connector id, an error code and the webhook's HTTP status.
  * They never carry the webhook URL or the text of a transport error.
+ *
+ * Server-side sends: send_event() lets plugin code (the Agent Finder and Lead Magnet deliveries in
+ * class-freshmints-crm-delivery.php) post a SERVER_EVENTS event through the same connector. It returns
+ * { ok, configured, code, status } and nothing else, so no caller can read or log the URL. The browser
+ * route does not accept SERVER_EVENTS: only server code can say a lead was captured or an agent was found.
  */
 
 if ( ! defined( 'WPINC' ) ) {
@@ -40,6 +45,12 @@ class Freshmints_Crm_Webhook_Rest {
 		'leads.bulk_synced',
 	);
 
+	/** Events only server code may send (send_event()); the browser relay route rejects them. */
+	const SERVER_EVENTS = array(
+		'agent_finder_new_agent',
+		'lead_magnet_opt_in',
+	);
+
 	public function register_routes() {
 		register_rest_route( self::REST_NAMESPACE, '/crm/webhook', array(
 			array(
@@ -52,6 +63,11 @@ class Freshmints_Crm_Webhook_Rest {
 
 	public function check_permissions() {
 		return current_user_can( 'manage_options' );
+	}
+
+	/** True when the crm_webhook_url connector holds a value. The value itself never leaves this class. */
+	public static function is_configured(): bool {
+		return Freshmints_Connectors::get_key( self::CONNECTOR_ID ) !== '';
 	}
 
 	public function handle_relay( WP_REST_Request $request ) {
@@ -72,6 +88,63 @@ class Freshmints_Crm_Webhook_Rest {
 			return $payload;
 		}
 
+		$status = $this->post_to_webhook( $webhook_url, $payload );
+		if ( is_wp_error( $status ) ) {
+			return $status;
+		}
+
+		return rest_ensure_response( array(
+			'success' => true,
+			'message' => 'Payload synced to the connected CRM webhook.',
+			'status'  => $status,
+		) );
+	}
+
+	/**
+	 * Post one server-side event (one lead or agent) through the crm_webhook_url connector.
+	 *
+	 * Nothing is sent when the connector is empty. The result never carries the URL or a transport message.
+	 *
+	 * @param string $event One of SERVER_EVENTS.
+	 * @param array  $data  One string-keyed object; cleaned the same way as the browser relay's leads.
+	 * @return array{ok:bool,configured:bool,code:string,status:int} code is '' on success, else the
+	 *               freshmints_crm_webhook_* error code; status is the webhook's HTTP status, or 0.
+	 */
+	public function send_event( string $event, array $data ): array {
+		$webhook_url = Freshmints_Connectors::get_key( self::CONNECTOR_ID );
+		if ( $webhook_url === '' ) {
+			return self::outcome( false, false, 'freshmints_crm_webhook_not_configured', 0 );
+		}
+
+		if ( ! in_array( $event, self::SERVER_EVENTS, true ) || $data === array() || $this->is_list( $data ) ) {
+			return self::outcome( false, true, 'freshmints_crm_webhook_invalid', 0 );
+		}
+
+		$payload = $this->envelope( $event, 1, $this->clean_value( $data, 0 ) );
+		$encoded = wp_json_encode( $payload );
+		if ( ! is_string( $encoded ) || strlen( $encoded ) > self::MAX_PAYLOAD_BYTES ) {
+			return self::outcome( false, true, 'freshmints_crm_webhook_invalid', 0 );
+		}
+
+		$status = $this->post_to_webhook( $webhook_url, $payload );
+		if ( is_wp_error( $status ) ) {
+			$info = $status->get_error_data();
+			return self::outcome( false, true, $status->get_error_code(), (int) ( is_array( $info ) ? ( $info['webhook_status'] ?? 0 ) : 0 ) );
+		}
+
+		return self::outcome( true, true, '', $status );
+	}
+
+	private static function outcome( bool $ok, bool $configured, string $code, int $status ): array {
+		return array( 'ok' => $ok, 'configured' => $configured, 'code' => $code, 'status' => $status );
+	}
+
+	/**
+	 * The one POST to the webhook, shared by the browser relay and send_event().
+	 *
+	 * @return int|WP_Error The webhook's HTTP status for a 2xx answer, else a WP_Error without the URL.
+	 */
+	private function post_to_webhook( string $webhook_url, array $payload ) {
 		// wp_safe_remote_post refuses loopback and private-network hosts, so the stored URL
 		// cannot be pointed at an internal service.
 		$response = wp_safe_remote_post( $webhook_url, array(
@@ -98,11 +171,17 @@ class Freshmints_Crm_Webhook_Rest {
 			);
 		}
 
-		return rest_ensure_response( array(
-			'success' => true,
-			'message' => 'Payload synced to the connected CRM webhook.',
-			'status'  => $status,
-		) );
+		return $status;
+	}
+
+	private function envelope( string $event, int $count, $data ): array {
+		return array(
+			'event'     => $event,
+			'timestamp' => gmdate( 'c' ),
+			'count'     => $count,
+			'data'      => $data,
+			'source'    => self::SOURCE,
+		);
 	}
 
 	/**
@@ -136,13 +215,7 @@ class Freshmints_Crm_Webhook_Rest {
 			$clean[] = $lead;
 		}
 
-		$payload = array(
-			'event'     => $event,
-			'timestamp' => gmdate( 'c' ),
-			'count'     => count( $clean ),
-			'data'      => $is_list ? $clean : $clean[0],
-			'source'    => self::SOURCE,
-		);
+		$payload = $this->envelope( $event, count( $clean ), $is_list ? $clean : $clean[0] );
 
 		$encoded = wp_json_encode( $payload );
 		if ( ! is_string( $encoded ) || strlen( $encoded ) > self::MAX_PAYLOAD_BYTES ) {
@@ -196,3 +269,8 @@ class Freshmints_Crm_Webhook_Rest {
 		return new WP_Error( 'freshmints_crm_webhook_invalid', $message, array( 'status' => 400 ) );
 	}
 }
+
+// The server-side deliveries (new Agent Finder agents, captured Lead Magnet leads) ride on send_event(),
+// so they hook themselves in from here: this file is already loaded by the plugin bootstrap.
+require_once __DIR__ . '/class-freshmints-crm-delivery.php';
+Freshmints_Crm_Delivery::register();

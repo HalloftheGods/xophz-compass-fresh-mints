@@ -12,6 +12,11 @@
  *        -> { run: {...} } when the run finished, even a partial one; 409 freshmints_agent_finder_running
  *           when a run is already going. The run is synchronous: a normal 7-day window takes a few seconds.
  *
+ * Both list responses also carry `delivery`, the HighLevel delivery state from Freshmints_Crm_Delivery::summary():
+ * { configured, message, maxAttempts, agents: {pending, failed, delivered, exhausted}, leads: {...}, lastBatch }.
+ * When no CRM webhook is configured, `configured` is false and `message` is "HighLevel webhook not configured".
+ * It is null when the delivery is not loaded. The retry action is POST /crm/retry-deliveries (class-freshmints-crm-delivery.php).
+ *
  * An empty table is an empty list with total 0, never made-up rows. Times are UTC, as ISO 8601 with a Z.
  */
 
@@ -121,6 +126,7 @@ class Freshmints_Agent_Finder_Rest {
 			'page'       => $page,
 			'perPage'    => $per,
 			'totalPages' => $pages,
+			'delivery'   => apply_filters( 'freshmints_agent_finder_delivery_summary', null ),
 		) );
 		$response->header( 'X-WP-Total', (string) $total );
 		$response->header( 'X-WP-TotalPages', (string) $pages );
