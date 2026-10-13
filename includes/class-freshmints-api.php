@@ -256,13 +256,13 @@ Return JSON strictly matching this structure:
 			$licenseNumber = $payload['licenseNumber'] ?? '';
 
 			$phone            = '';
-			$phone_type       = 'Unverified';
+			$phone_type       = 'Unknown';
+			$phone_source     = '';
 			$email            = '';
 			$secondary_email  = '';
 			$linkedin         = '';
 			$website          = '';
 			$address          = "{$city}, {$state}";
-			$confidence       = 0;
 			$sources_found    = array();
 			$extracted_emails = array();
 			$extracted_phones = array();
@@ -289,8 +289,8 @@ Return JSON strictly matching this structure:
 
 							if ( ! empty( $details['formatted_phone_number'] ) ) {
 								$phone           = $details['formatted_phone_number'];
-								$phone_type      = 'Verified Practice Line';
-								$confidence      = 95;
+								$phone_type      = 'Google Business Line';
+								$phone_source    = 'Google Places';
 								$sources_found[] = 'Google Places API';
 							}
 
@@ -336,7 +336,7 @@ Return JSON strictly matching this structure:
 					if ( $biz && ( ! empty( $biz['display_phone'] ) || ! empty( $biz['phone'] ) ) ) {
 						$phone           = ! empty( $biz['display_phone'] ) ? $biz['display_phone'] : $biz['phone'];
 						$phone_type      = 'Yelp Directory Line';
-						$confidence      = 90;
+						$phone_source    = 'Yelp';
 						$sources_found[] = 'Yelp Fusion API';
 
 						if ( ! empty( $biz['location']['address1'] ) ) {
@@ -369,29 +369,28 @@ Return JSON strictly matching this structure:
 					$email            = $scraped['primaryEmail'];
 					$secondary_email  = $scraped['emails'][1] ?? '';
 					$sources_found[]  = 'Website Contact Scraper (' . ( parse_url( $website, PHP_URL_HOST ) ?: $website ) . ')';
-					$confidence       = max( $confidence, 92 );
 				}
 
 				if ( empty( $phone ) && ! empty( $scraped['primaryPhone'] ) ) {
 					$phone           = $scraped['primaryPhone'];
 					$phone_type      = 'Website Scraped Line';
+					$phone_source    = 'Website (' . ( parse_url( $website, PHP_URL_HOST ) ?: $website ) . ')';
 					$sources_found[] = 'Website Phone Scraper';
-					$confidence      = max( $confidence, 88 );
 				}
 			}
 
-			$has_contact = ! empty( $phone ) || ! empty( $email );
 			$notes = ! empty( $sources_found )
-				? ( 'Verified authentic coordinates via ' . implode( ' + ', array_unique( $sources_found ) ) . '.' )
-				: 'No verified contact record found in Google Places or Yelp. (Deterministic API lookup - zero synthetic generation).';
+				? ( 'Contact details found via ' . implode( ' + ', array_unique( $sources_found ) ) . '. Not independently verified.' )
+				: 'No contact record found in the sources checked. (Deterministic API lookup - zero synthetic generation).';
 
 			return rest_ensure_response( array(
 				'success' => true,
 				'data'    => array(
-					'confidenceScore'   => $has_contact ? ( $confidence > 0 ? $confidence : 90 ) : 0,
 					'verifiedPhone'     => $phone,
-					'phoneType'         => ! empty( $phone ) ? $phone_type : 'Unverified',
-					'dncStatus'         => ! empty( $phone ) ? 'Public Business Directory' : 'No Phone Found',
+					'phoneType'         => ! empty( $phone ) ? $phone_type : 'Unknown',
+					'phoneSource'       => ! empty( $phone ) ? $phone_source : '',
+					// No DNC or carrier lookup runs here, so the status is always unknown.
+					'dncStatus'         => 'Unknown',
 					'primaryEmail'      => $email,
 					'secondaryEmail'    => $secondary_email,
 					'websiteUrl'        => $website,
@@ -401,7 +400,7 @@ Return JSON strictly matching this structure:
 					'mxValid'           => $mx_valid,
 					'mxRecords'         => $mx_records,
 					'schemaOrgData'     => $schema_data,
-					'emailValidation'   => ! empty( $email ) ? 'Website Scraped & Verified' : '',
+					'emailValidation'   => ! empty( $email ) ? 'Scraped from website, unverified' : '',
 					'linkedInUrl'       => $linkedin,
 					'currentAddress'    => $address,
 					'enrichmentNotes'   => $notes,
