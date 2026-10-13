@@ -1576,15 +1576,23 @@ Return JSON strictly matching this structure:
 			}
 		}
 
-		if ( $profession === 'insurance' && $state === 'TX' ) {
+		if ( $profession === 'insurance' && Freshmints_Registry_Producers::supports( $state ) ) {
 			$producer_leads = Freshmints_Registry_Producers::fetch( $state, $limit, (string) $date_window );
 
 			if ( ! empty( $producer_leads ) ) {
+				$labels = Freshmints_Registry_Producers::describe( $state );
+				$notes  = "Retrieved " . count( $producer_leads ) . " live verified life insurance producer records{$window_label} from " . ( $labels['portal'] ?? "the {$state} open data portal" ) . '.';
+
+				// The data's licence terms travel with it (Iowa: CC BY 4.0). Texas asks for none.
+				if ( ! empty( $labels['attribution'] ) ) {
+					$notes .= ' ' . $labels['attribution'];
+				}
+
 				return rest_ensure_response( array(
 					'success'        => true,
-					'source'         => Freshmints_Registry_Producers::SOURCE_LABEL,
+					'source'         => $labels['source'] ?? $this->get_regulatory_board_name( $profession, $state ),
 					'leads'          => $producer_leads,
-					'groundingNotes' => "Retrieved " . count( $producer_leads ) . " live verified life insurance producer records{$window_label} from the Texas Department of Insurance open data portal.",
+					'groundingNotes' => $notes,
 					'totalFound'     => count( $producer_leads ),
 				) );
 			}
