@@ -27,6 +27,11 @@ class Xophz_Compass_Freshmints_Admin {
 		register_setting( 'xophz_compass_freshmints_options', 'xophz_compass_freshmints_default_fetch_qty' );
 		register_setting( 'xophz_compass_freshmints_options', 'xophz_compass_freshmints_auto_sync_crm' );
 		register_setting( 'xophz_compass_freshmints_options', 'xophz_compass_freshmints_auto_sync_bomb_bag' );
+		register_setting( 'xophz_compass_freshmints_options', Freshmints_Social_Retention::OPTION_DAYS, array(
+			'type'              => 'integer',
+			'default'           => Freshmints_Social_Retention::DEFAULT_DAYS,
+			'sanitize_callback' => array( 'Freshmints_Social_Retention', 'sanitize_days' ),
+		) );
 	}
 
 	public function display_plugin_setup_page() {
@@ -36,6 +41,7 @@ class Xophz_Compass_Freshmints_Admin {
 		$fetch_qty          = (int) get_option( 'xophz_compass_freshmints_default_fetch_qty', 25 );
 		$auto_sync_crm      = get_option( 'xophz_compass_freshmints_auto_sync_crm', '0' );
 		$auto_sync_bomb_bag = get_option( 'xophz_compass_freshmints_auto_sync_bomb_bag', '0' );
+		$retention_days     = Freshmints_Social_Retention::retention_days();
 		$pages              = get_pages();
 		?>
 		<div class="wrap">
@@ -118,6 +124,13 @@ class Xophz_Compass_Freshmints_Admin {
 								<input type="checkbox" name="xophz_compass_freshmints_auto_sync_bomb_bag" value="1" <?php checked( '1', $auto_sync_bomb_bag ); ?> />
 								Automatically create a Bomb Bag Subscriber and enroll in Fresh Mints marketing journeys.
 							</label>
+						</td>
+					</tr>
+					<tr valign="top">
+						<th scope="row">Social Radar Retention (days)</th>
+						<td>
+							<input type="number" name="<?php echo esc_attr( Freshmints_Social_Retention::OPTION_DAYS ); ?>" value="<?php echo esc_attr( $retention_days ); ?>" min="<?php echo esc_attr( Freshmints_Social_Retention::MIN_DAYS ); ?>" max="<?php echo esc_attr( Freshmints_Social_Retention::MAX_DAYS ); ?>" class="small-text" />
+							<p class="description">How long Social Radar keeps a discovered post (title, link, channel, score and your draft reply) before the app deletes it. Posts deleted or removed on Reddit are dropped sooner. Default <?php echo esc_html( Freshmints_Social_Retention::DEFAULT_DAYS ); ?>, at most <?php echo esc_html( Freshmints_Social_Retention::MAX_DAYS ); ?>.</p>
 						</td>
 					</tr>
 				</table>

@@ -29,6 +29,7 @@ require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-fr
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-freshmints-social-provider-stackexchange.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-freshmints-social-provider-youtube.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/class-freshmints-social-rest.php';
+require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/class-freshmints-social-retention.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/class-freshmints-social-dispatch-rest.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/crm/class-freshmints-crm-webhook-rest.php';
 
@@ -52,6 +53,9 @@ function run_xophz_compass_freshmints() {
 
 		$social = new Freshmints_Social_Rest();
 		$social->register_routes();
+
+		$retention = new Freshmints_Social_Retention();
+		$retention->register_routes();
 
 		$dispatch = new Freshmints_Social_Dispatch_Rest();
 		$dispatch->register_routes();

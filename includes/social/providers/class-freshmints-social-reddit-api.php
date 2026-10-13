@@ -288,7 +288,11 @@ class Freshmints_Social_Reddit_Api {
 		set_transient( self::PAUSE_TRANSIENT, time() + $seconds, $seconds );
 	}
 
-	private static function pause_remaining(): int {
+	/**
+	 * Seconds left of a pause Reddit asked for, 0 when the provider is not paused.
+	 * Public so a caller that got a failed outcome can tell a rate limit from other failures.
+	 */
+	public static function pause_remaining(): int {
 		$until = get_transient( self::PAUSE_TRANSIENT );
 		return is_numeric( $until ) ? max( 0, (int) $until - time() ) : 0;
 	}
