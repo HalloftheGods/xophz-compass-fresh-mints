@@ -35,7 +35,7 @@ class Freshmints_Registry_Producer_Rows {
 	const RETRY_PAUSE_MICROS = 500000;
 
 	/** Columns a lead is built from. */
-	const ROW_FIELDS = 'npn,license_number,name,qualification,license_issue_date,city,pstl_cd';
+	const ROW_FIELDS = 'npn,license_number,name,license_type,qualification,license_issue_date,city,pstl_cd';
 
 	/** Newest first, with tie-breaks so paging by offset never repeats or drops a row. */
 	const ORDER_NEWEST = 'license_issue_date DESC, npn DESC, license_number DESC';
@@ -350,6 +350,7 @@ class Freshmints_Registry_Producer_Rows {
 			'npn'           => self::token( $row, 'npn' ),
 			'license'       => self::token( $row, 'license_number' ),
 			'name'          => self::text( $row, 'name' ),
+			'license_type'  => self::text( $row, 'license_type' ),
 			'qualification' => self::text( $row, 'qualification' ),
 			'issue_date'    => self::issue_date( self::text( $row, 'license_issue_date' ) ),
 			'city'          => self::text( $row, 'city' ),

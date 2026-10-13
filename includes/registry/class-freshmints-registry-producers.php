@@ -91,8 +91,9 @@ class Freshmints_Registry_Producers {
 
 	/**
 	 * Midnight UTC at the start of the window, as a SODA floating timestamp. '' when there is no window.
+	 * Public so a caller can record the exact window a fetch() with the same $date_window will use.
 	 */
-	private static function window_start( string $date_window ): string {
+	public static function window_start( string $date_window ): string {
 		$days = ctype_digit( $date_window ) ? (int) $date_window : 0;
 		return $days > 0 ? gmdate( 'Y-m-d\T00:00:00', time() - ( $days * DAY_IN_SECONDS ) ) : '';
 	}
@@ -169,6 +170,13 @@ class Freshmints_Registry_Producers {
 			),
 			'estimatedDealValue' => $deal_value,
 			'createdAt'          => gmdate( 'c' ),
+			// The registry's own values, unformatted, for callers that store the person (Agent Finder sync).
+			'registry'           => array(
+				'npn'           => $f['npn'],
+				'licenseType'   => $f['license_type'],
+				'qualification' => $f['qualification'],
+				'postalCode'    => $f['postal'],
+			),
 		);
 	}
 
