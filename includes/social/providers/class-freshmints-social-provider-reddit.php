@@ -2,11 +2,13 @@
 /**
  * Reddit provider for the Social Radar feed.
  *
- * Fetches public Reddit search results server-side, because www.reddit.com
- * sends no CORS headers and the browser cannot call it directly.
+ * Searches subreddits through Reddit's official Data API with app-only OAuth,
+ * server-side, so the client secret and the token never reach the browser. The
+ * token, the User-Agent and the rate limits live in Freshmints_Social_Reddit_Api.
  *
- * Reddit's free tier excludes commercial use, so this provider ships behind
- * the option `xophz_compass_freshmints_social_reddit_enabled` (default '0').
+ * The provider is on when the reddit_client_id, reddit_client_secret and
+ * reddit_username connectors are set, and answers "not configured" otherwise.
+ * There is no fallback to the public www.reddit.com JSON.
  *
  * Outcome shapes, exactly one of:
  *   array( 'status' => 'ok',      'posts'  => array )
@@ -20,11 +22,8 @@ if ( ! defined( 'WPINC' ) ) {
 
 class Freshmints_Social_Provider_Reddit {
 
-	const ENABLED_OPTION   = 'xophz_compass_freshmints_social_reddit_enabled';
 	const DEFAULT_CHANNELS = 'smallbusiness+entrepreneur+webdev+sales';
-	const ENDPOINT_BASE    = 'https://www.reddit.com/r/';
 	const RESULT_LIMIT     = 15;
-	const TIMEOUT_SECONDS  = 10;
 	const MAX_KEYWORDS     = 20;
 	const MAX_KEYWORD_LEN  = 100;
 	const MAX_CHANNELS     = 10;
@@ -34,8 +33,9 @@ class Freshmints_Social_Provider_Reddit {
 	 * @return array Outcome (see file header).
 	 */
 	public static function fetch_posts( array $rule ): array {
-		if ( ! self::is_enabled() ) {
-			return self::failed( 'Reddit is disabled pending commercial API terms.' );
+		$unconfigured = Freshmints_Social_Reddit_Api::configuration_error();
+		if ( $unconfigured !== null ) {
+			return $unconfigured;
 		}
 
 		$keywords = self::clean_keywords( $rule['keywords'] ?? array() );
@@ -44,30 +44,15 @@ class Freshmints_Social_Provider_Reddit {
 		}
 
 		$channels = self::clean_channels( $rule['targetChannels'] ?? array() );
-		$url      = self::build_url( $keywords, $channels );
-
-		$response = wp_remote_get( $url, array(
-			'timeout' => self::TIMEOUT_SECONDS,
-			'headers' => array(
-				'Accept'     => 'application/json',
-				'User-Agent' => self::user_agent(),
-			),
-		) );
-
-		if ( is_wp_error( $response ) ) {
-			return array(
-				'status' => 'blocked',
-				'reason' => 'Reddit is unreachable from the server (' . $response->get_error_message() . ').',
-			);
+		$result   = Freshmints_Social_Reddit_Api::get(
+			self::search_path( $channels ),
+			self::search_query( $keywords )
+		);
+		if ( $result['status'] !== 'ok' ) {
+			return $result;
 		}
 
-		$code = (int) wp_remote_retrieve_response_code( $response );
-		if ( $code !== 200 ) {
-			return self::failed( "Reddit refused the request (HTTP {$code})." );
-		}
-
-		$payload = json_decode( wp_remote_retrieve_body( $response ), true );
-		$posts   = self::parse_posts( $payload );
+		$posts = self::parse_posts( $result['body'] );
 		if ( $posts === null ) {
 			return self::failed( 'Reddit returned a response that was not a valid search listing.' );
 		}
@@ -75,16 +60,8 @@ class Freshmints_Social_Provider_Reddit {
 		return array( 'status' => 'ok', 'posts' => $posts );
 	}
 
-	private static function is_enabled(): bool {
-		return (string) get_option( self::ENABLED_OPTION, '0' ) === '1';
-	}
-
 	private static function failed( string $reason ): array {
 		return array( 'status' => 'failed', 'reason' => $reason );
-	}
-
-	private static function user_agent(): string {
-		return 'xophz-compass-fresh-mints/' . XOPHZ_COMPASS_FRESHMINTS_VERSION . ' (+' . home_url() . ')';
 	}
 
 	/**
@@ -142,15 +119,27 @@ class Freshmints_Social_Provider_Reddit {
 	}
 
 	/**
-	 * @param string[] $keywords Non-empty, already cleaned.
-	 * @param string[] $channels May be empty, in which case the defaults apply.
+	 * @param string[] $channels Already cleaned; may be empty, in which case the defaults apply.
 	 */
-	private static function build_url( array $keywords, array $channels ): string {
+	private static function search_path( array $channels ): string {
 		$joined = empty( $channels ) ? self::DEFAULT_CHANNELS : implode( '+', $channels );
-		$query  = rawurlencode( implode( ' OR ', $keywords ) );
 
-		return self::ENDPOINT_BASE . $joined . '/search.json?q=' . $query
-			. '&sort=new&restrict_sr=on&limit=' . self::RESULT_LIMIT;
+		return '/r/' . $joined . '/search';
+	}
+
+	/**
+	 * raw_json=1 asks Reddit not to HTML-escape &, < and > in titles and bodies.
+	 *
+	 * @param string[] $keywords Non-empty, already cleaned.
+	 */
+	private static function search_query( array $keywords ): array {
+		return array(
+			'q'           => implode( ' OR ', $keywords ),
+			'sort'        => 'new',
+			'restrict_sr' => 'on',
+			'limit'       => self::RESULT_LIMIT,
+			'raw_json'    => 1,
+		);
 	}
 
 	/**

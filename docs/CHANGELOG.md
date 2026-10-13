@@ -4,6 +4,12 @@ All notable changes to the Xophz Compass Fresh Mints plugin will be documented i
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2026-10-12]
+
+### Changed
+- **Reddit search moved onto Reddit's official Data API ([class-freshmints-social-reddit-api.php](file:///home/xopher/www/x/Xophz-COMPASS/wp-content/plugins/xophz-compass-fresh-mints/includes/social/providers/class-freshmints-social-reddit-api.php), [class-freshmints-social-provider-reddit.php](file:///home/xopher/www/x/Xophz-COMPASS/wp-content/plugins/xophz-compass-fresh-mints/includes/social/providers/class-freshmints-social-provider-reddit.php), #6028)**: The Reddit provider no longer reads the public `www.reddit.com` search JSON. It uses app-only OAuth (`grant_type=client_credentials`, HTTP Basic with the app's id and secret) against `https://www.reddit.com/api/v1/access_token`, caches the bearer token in a transient until two minutes before it expires (and drops it and renews once on a 401), and searches `https://oauth.reddit.com/r/<subs>/search` with a `wordpress:TopicRadar:v<version> (by /u/<username>)` User-Agent. The `X-Ratelimit-*` headers and any 429 `Retry-After` pause the provider (capped at ten minutes), so a scan never retries into a limit. The app is shared with YouMeOS Topic Radar, so the three connectors register only when nobody else has: `reddit_client_id` (`REDDIT_CLIENT_ID`), `reddit_client_secret` (`REDDIT_CLIENT_SECRET`) and `reddit_username` (`REDDIT_USERNAME`, the account named in the User-Agent), all under Settings > Connectors with credentials at `https://www.reddit.com/prefs/apps`. With any of them missing the provider answers `failed` / "Reddit is not configured." and makes no request; there is no public-JSON fallback. The secret and the token are never put in a response or a reason.
+- **Reddit enable option removed**: `xophz_compass_freshmints_social_reddit_enabled` is no longer read. Setting the connectors is what turns Reddit on. A leftover value in `wp_options` is inert and can be deleted. Owner action before real use: register a Reddit "script" or web app and apply for Data API access for commercial use.
+
 ## [2026-10-10]
 
 ### Security

@@ -24,6 +24,7 @@ require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'public/class-xophz-compass-freshmi
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/class-freshmints-connectors.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/class-freshmints-api.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/registry/class-freshmints-registry-producers.php';
+require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-freshmints-social-reddit-api.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-freshmints-social-provider-reddit.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-freshmints-social-provider-stackexchange.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-freshmints-social-provider-youtube.php';
@@ -135,6 +136,59 @@ function run_xophz_compass_freshmints() {
 							'constant_name'   => 'COMPASS_STACKEXCHANGE_API_KEY',
 							'env_var_name'    => 'COMPASS_STACKEXCHANGE_API_KEY',
 							'credentials_url' => 'https://stackapps.com/apps/oauth/register',
+						),
+					)
+				);
+			}
+			// The Reddit app is shared (Topic Radar in Fresh Mints and YouMeOS), so each connector
+			// registers only when nobody else has, and core or another plugin may own it later.
+			if ( ! wp_is_connector_registered( 'reddit_client_id' ) ) {
+				$registry->register(
+					'reddit_client_id',
+					array(
+						'name'           => 'Reddit Client ID',
+						'description'    => 'Client ID of the Reddit "script" or web app that powers Reddit search in Social Radar and Topic Radar (the short string under the app name).',
+						'type'           => 'api_key',
+						'authentication' => array(
+							'method'          => 'api_key',
+							'setting_name'    => 'compass_reddit_client_id',
+							'constant_name'   => 'REDDIT_CLIENT_ID',
+							'env_var_name'    => 'REDDIT_CLIENT_ID',
+							'credentials_url' => 'https://www.reddit.com/prefs/apps',
+						),
+					)
+				);
+			}
+			if ( ! wp_is_connector_registered( 'reddit_client_secret' ) ) {
+				$registry->register(
+					'reddit_client_secret',
+					array(
+						'name'           => 'Reddit Client Secret',
+						'description'    => 'Client secret of the Reddit app. The server trades it for a short-lived app-only token, so it never reaches the browser.',
+						'type'           => 'api_key',
+						'authentication' => array(
+							'method'          => 'api_key',
+							'setting_name'    => 'compass_reddit_client_secret',
+							'constant_name'   => 'REDDIT_CLIENT_SECRET',
+							'env_var_name'    => 'REDDIT_CLIENT_SECRET',
+							'credentials_url' => 'https://www.reddit.com/prefs/apps',
+						),
+					)
+				);
+			}
+			if ( ! wp_is_connector_registered( 'reddit_username' ) ) {
+				$registry->register(
+					'reddit_username',
+					array(
+						'name'           => 'Reddit Username',
+						'description'    => 'Reddit account that owns the app. Reddit requires every API request to name it in the User-Agent, as "(by /u/username)".',
+						'type'           => 'api_key',
+						'authentication' => array(
+							'method'          => 'api_key',
+							'setting_name'    => 'compass_reddit_username',
+							'constant_name'   => 'REDDIT_USERNAME',
+							'env_var_name'    => 'REDDIT_USERNAME',
+							'credentials_url' => 'https://www.reddit.com/prefs/apps',
 						),
 					)
 				);
