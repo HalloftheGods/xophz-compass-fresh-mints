@@ -73,7 +73,7 @@ class Freshmints_Agent_Finder_Sync {
 	/** Plugin deactivation: remove the weekly schedule from both schedulers. The tables and rows stay. */
 	public static function deactivate(): void {
 		wp_clear_scheduled_hook( self::HOOK_SYNC );
-		if ( function_exists( 'as_unschedule_all_actions' ) ) {
+		if ( self::scheduler_loaded() ) {
 			as_unschedule_all_actions( self::HOOK_SYNC );
 		}
 		delete_option( self::SCHEDULE_OPTION );
@@ -81,11 +81,14 @@ class Freshmints_Agent_Finder_Sync {
 
 	/**
 	 * Make sure exactly one weekly schedule exists. $force skips the SCHEDULE_CHECK_SECONDS throttle.
-	 * Action Scheduler wins when it is loaded, and the WP-Cron event is removed so a week never runs twice.
+	 * Action Scheduler wins when it is loaded, and the WP-Cron event is removed so a week never runs twice;
+	 * with no Action Scheduler (or the filter `freshmints_agent_finder_use_action_scheduler` returning false)
+	 * the WP-Cron event is used and any Action Scheduler action for the hook is removed.
 	 */
 	public static function ensure_scheduled( bool $force ): void {
-		$kind  = self::scheduler_ready() ? 'action-scheduler' : 'wp-cron';
-		$state = get_option( self::SCHEDULE_OPTION );
+		$loaded = self::scheduler_loaded();
+		$kind   = $loaded && apply_filters( 'freshmints_agent_finder_use_action_scheduler', true ) ? 'action-scheduler' : 'wp-cron';
+		$state  = get_option( self::SCHEDULE_OPTION );
 
 		if ( ! $force && is_array( $state ) && ( $state['kind'] ?? '' ) === $kind
 			&& ( time() - (int) ( $state['checked'] ?? 0 ) ) < self::SCHEDULE_CHECK_SECONDS ) {
@@ -99,16 +102,22 @@ class Freshmints_Agent_Finder_Sync {
 			if ( ! as_next_scheduled_action( self::HOOK_SYNC, array(), self::SCHEDULER_GROUP ) ) {
 				as_schedule_recurring_action( $first_run, WEEK_IN_SECONDS, self::HOOK_SYNC, array(), self::SCHEDULER_GROUP );
 			}
-		} elseif ( ! wp_next_scheduled( self::HOOK_SYNC ) ) {
-			wp_schedule_event( $first_run, 'weekly', self::HOOK_SYNC );
+		} else {
+			if ( $loaded ) {
+				as_unschedule_all_actions( self::HOOK_SYNC );
+			}
+			if ( ! wp_next_scheduled( self::HOOK_SYNC ) ) {
+				wp_schedule_event( $first_run, 'weekly', self::HOOK_SYNC );
+			}
 		}
 
 		update_option( self::SCHEDULE_OPTION, array( 'kind' => $kind, 'checked' => time() ), true );
 	}
 
-	private static function scheduler_ready(): bool {
+	private static function scheduler_loaded(): bool {
 		return function_exists( 'as_schedule_recurring_action' )
 			&& function_exists( 'as_next_scheduled_action' )
+			&& function_exists( 'as_unschedule_all_actions' )
 			&& class_exists( 'ActionScheduler' )
 			&& ActionScheduler::is_initialized();
 	}
