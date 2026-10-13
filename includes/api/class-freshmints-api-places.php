@@ -155,11 +155,12 @@ class Freshmints_Api_Places extends Freshmints_Api_Controller {
 			$details_url    = "https://maps.googleapis.com/maps/api/place/details/json?place_id={$place_id}&fields={$details_fields}&key={$google_key}";
 			$details_res    = wp_remote_get( $details_url, array( 'timeout' => 15 ) );
 
-			$website_url     = '';
-			$formatted_phone = '';
-			$maps_url        = $place['url'] ?? "https://www.google.com/maps/place/?q=place_id:{$place_id}";
-			$extracted_city  = $city_input;
-			$extracted_state = $state_input;
+			$website_url         = '';
+			$formatted_phone     = '';
+			$international_phone = '';
+			$maps_url            = $place['url'] ?? "https://www.google.com/maps/place/?q=place_id:{$place_id}";
+			$extracted_city      = $city_input;
+			$extracted_state     = $state_input;
 
 			if ( ! is_wp_error( $details_res ) && wp_remote_retrieve_response_code( $details_res ) === 200 ) {
 				$details_data = json_decode( wp_remote_retrieve_body( $details_res ), true );
