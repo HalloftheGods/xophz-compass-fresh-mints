@@ -1,21 +1,35 @@
 <?php
 /**
- * Agent Finder weekly sync: pulls newly licensed Texas insurance agents from the registry and stores each
+ * Agent Finder weekly sync: pulls newly licensed insurance agents from the state registries and stores each
  * one once, by NPN, for the delivery step (#6024) to send on.
  *
- * One run:
- *   1. picks a window: 7 days, widened to cover the time since the last FULLY completed run (cap 30 days);
- *   2. calls Freshmints_Registry_Producers::fetch( 'TX', LEAD_LIMIT, <days>, true ), which already returns
- *      only people whose first Texas licence of any kind falls in the window, and reads last_stats();
- *   3. stores the people not stored before (Freshmints_Agent_Finder_Store, unique NPN);
- *   4. records the run and fires `freshmints_agent_finder_new_agents` with the new agent ids.
+ * One sync runs every state Freshmints_Registry_Producers::states() lists (Texas, Iowa), one after the
+ * other, and records ONE RUN ROW PER STATE. For each state:
+ *   1. picks a window: 7 days, widened to cover the time since that state's last FULLY completed run
+ *      (cap 30 days). Each state tracks its own completed window, so a failed Iowa run does not move
+ *      Texas's window or the other way round;
+ *   2. calls Freshmints_Registry_Producers::fetch( <state>, LEAD_LIMIT, <days>, true ), which returns only
+ *      people whose first licence in that state falls in the window, and reads last_stats();
+ *   3. stores the people not stored before (Freshmints_Agent_Finder_Store, unique NPN). A person already
+ *      stored from the other state stays as first seen;
+ *   4. records the run. After all states have run, `freshmints_agent_finder_new_agents` fires once per
+ *      state that stored new agents, with those agent ids and the state.
  *
  * A run whose stats say complete=false (a request failed, the row cap or the time budget stopped it) is
  * recorded as partial. Its agents are kept, each one was verified, but it does not count as completed, so
  * the next run's window still reaches back to the last run that did. A window longer than the cap is
  * recorded as complete with error code `window_capped`: the gap beyond 30 days cannot be recovered.
  *
- * Nothing is delivered here. Listeners of the action receive the ids of the agents this run inserted;
+ * What is stored per person is the person's whole record, not only the one licence row the lead was built
+ * from: `first_issue_date` is the date of their first licence of any line (registry `firstIssueDate`, else
+ * the lead's issue date) and `annuity_capable` is true when the registry says so (Iowa's annuityCapable) or
+ * when any life qualification they hold in the window carries annuity authority (Texas).
+ *
+ * Iowa leads carry the contact details the State publishes (registryContact: business email, phone, address).
+ * They are stored as given, and they are NOT consent: nothing here sends anything, and delivery tags every
+ * Agent Finder agent as having no consent yet.
+ *
+ * Nothing is delivered here. Listeners of the action receive the ids of the agents a run inserted;
  * pending and failed rows from earlier runs stay queryable by delivery status (REST or the store).
  *
  * Scheduling: Action Scheduler (WooCommerce ships it) when it is loaded, else WP-Cron, once a week.
@@ -27,6 +41,7 @@ if ( ! defined( 'WPINC' ) ) {
 }
 
 require_once __DIR__ . '/class-freshmints-agent-finder-store.php';
+require_once __DIR__ . '/class-freshmints-agent-finder-mapper.php';
 
 class Freshmints_Agent_Finder_Sync {
 
@@ -36,19 +51,12 @@ class Freshmints_Agent_Finder_Sync {
 	const SCHEDULE_OPTION    = 'freshmints_agent_finder_schedule';
 	const LOCK_OPTION        = 'freshmints_agent_finder_sync_lock';
 
-	const STATE                  = 'TX';
 	const DEFAULT_WINDOW_DAYS    = 7;
 	const MAX_WINDOW_DAYS        = 30;
 	const LEAD_LIMIT             = 10000;
 	const TIME_BUDGET_SECONDS    = 120;
 	const LOCK_TTL_SECONDS       = 900;
 	const SCHEDULE_CHECK_SECONDS = 21600;
-
-	/** The qualifications that carry annuity authority (decision on #6021); every other life line is stored with annuity_capable = 0. */
-	const ANNUITY_QUALIFICATIONS = array(
-		'Life, Accident, Health & HMO',
-		'Life Agent/Agency',
-	);
 
 	public function register(): void {
 		add_action( 'init', array( $this, 'on_init' ), 20 );
@@ -123,45 +131,58 @@ class Freshmints_Agent_Finder_Sync {
 	}
 
 	/**
-	 * Run one sync now.
+	 * Run one sync now: one run per state, in the order Freshmints_Registry_Producers::states() gives.
 	 *
-	 * @param string $trigger 'cron' or 'manual'.
-	 * @return array|WP_Error The finished run row (keys of the runs table, plus `new_agent_ids`), or an error when a run is already going.
+	 * @param string   $trigger 'cron' or 'manual'.
+	 * @param string[] $states  Limit the sync to these states; empty (default) runs every supported state.
+	 *                          A state the registry tier does not support is ignored.
+	 * @return array[]|WP_Error The finished run rows, one per state (keys of the runs table, plus `new_agent_ids`),
+	 *                          or an error when a run is already going.
 	 */
-	public function run( string $trigger = 'manual' ) {
+	public function run( string $trigger = 'manual', array $states = array() ) {
+		$wanted = $states ? array_map( 'strtoupper', array_map( 'trim', array_map( 'strval', $states ) ) ) : Freshmints_Registry_Producers::states();
+		$states = array_values( array_filter( $wanted, array( 'Freshmints_Registry_Producers', 'supports' ) ) );
+
 		if ( ! $this->acquire_lock() ) {
 			return new WP_Error( 'freshmints_agent_finder_running', 'An Agent Finder sync is already running.', array( 'status' => 409 ) );
 		}
 
+		$rows = array();
 		try {
-			$row = $this->execute( $trigger );
+			foreach ( $states as $state ) {
+				$rows[] = $this->execute( $trigger, $state );
+			}
 		} finally {
 			$this->release_lock();
 		}
 
-		if ( $row['new_agent_ids'] ) {
-			/**
-			 * New agents were stored. Delivery (#6024) listens here; the sync delivers nothing itself.
-			 *
-			 * @param int[] $new_agent_ids Ids in the agents table of the rows this run inserted.
-			 */
-			do_action( self::ACTION_NEW_AGENTS, $row['new_agent_ids'] );
+		foreach ( $rows as $row ) {
+			if ( $row['new_agent_ids'] ) {
+				/**
+				 * New agents were stored for a state. Delivery (#6024) listens here; the sync delivers nothing itself.
+				 *
+				 * @param int[]  $new_agent_ids Ids in the agents table of the rows that state's run inserted.
+				 * @param string $state         The state the run was for ('TX' or 'IA').
+				 */
+				do_action( self::ACTION_NEW_AGENTS, $row['new_agent_ids'], $row['state'] );
+			}
 		}
 
-		return $row;
+		return $rows;
 	}
 
-	/** The run itself, with the lock held: window, fetch, store, record. */
-	private function execute( string $trigger ): array {
+	/** One state's run, with the lock held: window, fetch, store, record. */
+	private function execute( string $trigger, string $state ): array {
 		$started = microtime( true );
 		$now     = time();
-		$wanted  = $this->wanted_days( $now );
+		$wanted  = $this->wanted_days( $now, $state );
 		$days    = min( self::MAX_WINDOW_DAYS, $wanted );
 		$capped  = $wanted > self::MAX_WINDOW_DAYS;
 		$run_id  = Freshmints_Agent_Finder_Store::start_run(
 			$trigger,
 			(int) strtotime( Freshmints_Registry_Producers::window_start( (string) $days ) . ' UTC' ),
-			$now
+			$now,
+			$state
 		);
 
 		$budget = static function () {
@@ -176,7 +197,7 @@ class Freshmints_Agent_Finder_Sync {
 				set_time_limit( self::TIME_BUDGET_SECONDS + 120 );
 			}
 			add_filter( 'freshmints_registry_producers_time_budget', $budget, 20 );
-			$leads = Freshmints_Registry_Producers::fetch( self::STATE, self::LEAD_LIMIT, (string) $days, true );
+			$leads = Freshmints_Registry_Producers::fetch( $state, self::LEAD_LIMIT, (string) $days, true );
 			$stats = Freshmints_Registry_Producers::last_stats();
 		} catch ( \Throwable $e ) {
 			$thrown = true;
@@ -187,7 +208,7 @@ class Freshmints_Agent_Finder_Sync {
 		$agents  = array();
 		$skipped = (int) ( $stats['rows_without_npn'] ?? 0 );
 		foreach ( $leads as $lead ) {
-			$agent = self::agent_from_lead( $lead );
+			$agent = Freshmints_Agent_Finder_Mapper::agent_from_lead( $lead, $state );
 			if ( $agent === null ) {
 				++$skipped;
 				continue;
@@ -214,10 +235,10 @@ class Freshmints_Agent_Finder_Sync {
 
 	/**
 	 * Days the next window should reach back, before the cap: 7 normally, more to cover the time since the
-	 * last completed run.
+	 * last completed run of the same state.
 	 */
-	private function wanted_days( int $now ): int {
-		$last_end = Freshmints_Agent_Finder_Store::last_complete_window_end();
+	private function wanted_days( int $now, string $state ): int {
+		$last_end = Freshmints_Agent_Finder_Store::last_complete_window_end( $state );
 		if ( $last_end === null ) {
 			return self::DEFAULT_WINDOW_DAYS;
 		}
@@ -242,44 +263,6 @@ class Freshmints_Agent_Finder_Sync {
 			return 'lead_limit_reached';
 		}
 		return $capped ? 'window_capped' : '';
-	}
-
-	/**
-	 * The registry lead as a storable agent, or null when it has no NPN (the key a person is stored under).
-	 * Values are the registry's own; nothing is filled in.
-	 *
-	 * @return array<string,mixed>|null
-	 */
-	private static function agent_from_lead( $lead ): ?array {
-		if ( ! is_array( $lead ) ) {
-			return null;
-		}
-		$registry = is_array( $lead['registry'] ?? null ) ? $lead['registry'] : array();
-		$npn      = self::fit( $registry['npn'] ?? '', 32 );
-		$name     = self::fit( $lead['fullName'] ?? '', 255 );
-		if ( $npn === '' || $name === '' ) {
-			return null;
-		}
-
-		$qualification = self::fit( $registry['qualification'] ?? '', 100 );
-
-		return array(
-			'npn'              => $npn,
-			'name'             => $name,
-			'license_type'     => self::fit( $registry['licenseType'] ?? '', 100 ),
-			'qualification'    => $qualification,
-			'annuity_capable'  => in_array( $qualification, self::ANNUITY_QUALIFICATIONS, true ),
-			'first_issue_date' => self::fit( $lead['issueDate'] ?? '', 10 ),
-			'city'             => self::fit( $lead['city'] ?? '', 100 ),
-			'state'            => self::fit( $lead['state'] ?? '', 2 ),
-			'zip'              => self::fit( $registry['postalCode'] ?? '', 16 ),
-			'source_label'     => Freshmints_Registry_Producers::SOURCE_LABEL,
-		);
-	}
-
-	/** A scalar as a trimmed string cut to $max characters; anything else is ''. */
-	private static function fit( $value, int $max ): string {
-		return is_scalar( $value ) ? mb_substr( trim( (string) $value ), 0, $max ) : '';
 	}
 
 	/** One run at a time: add_option is atomic, and a lock older than LOCK_TTL_SECONDS (a dead run) is taken over. */

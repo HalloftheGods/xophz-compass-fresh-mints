@@ -16,6 +16,11 @@
  *   3. keep the NPNs whose first issue date is inside the window, with their earliest life row in it.
  * A row without an NPN cannot be tied to a person, so it is counted and skipped.
  *
+ * Each returned row stands for the PERSON, not only for that one licence. It carries two extra keys, read
+ * back by fields(): `_first_issue` (the step 2 minimum: the date of the person's first Texas licence of any
+ * line, which can be earlier than the earliest life row) and `_qualifications` (every life qualification the
+ * person holds in the window, so a limited life line first and a full life line later is still seen).
+ *
  * Every request has a timeout, a request that fails is retried once, and the run stops at MAX_WINDOW_ROWS
  * window rows or when the time budget runs out. stats() says whether a run finished cleanly.
  */
@@ -55,6 +60,12 @@ class Freshmints_Registry_Producer_Rows {
 
 	/** @var float Unix time (microtime) after which no further request is started. */
 	private $deadline;
+
+	/** @var array<string,string> npn => first issue date (Y-m-d) across every row of that NPN, for each NPN that went through the check. */
+	private $first_days = array();
+
+	/** @var array<string,array<string,true>> npn => the life qualifications seen for that NPN in the window. */
+	private $qualifications = array();
 
 	/** @var array<string,int|bool> */
 	private $stats = array(
@@ -167,6 +178,7 @@ class Freshmints_Registry_Producer_Rows {
 					continue;
 				}
 				$people[ $npn ] = $row;
+				$this->remember_qualification( $npn, $row );
 				if ( ! isset( $checked[ $npn ] ) ) {
 					$checked[ $npn ] = true;
 					$pending[]       = $npn;
@@ -192,10 +204,24 @@ class Freshmints_Registry_Producer_Rows {
 
 		$rows = array();
 		foreach ( $kept as $npn ) {
-			$rows[] = $people[ $npn ];
+			$person = $people[ $npn ];
+			$quals  = array_keys( $this->qualifications[ $npn ] ?? array() );
+			sort( $quals );
+
+			$person['_first_issue']    = $this->first_days[ $npn ] ?? '';
+			$person['_qualifications'] = $quals;
+			$rows[]                    = $person;
 		}
 
 		return $rows;
+	}
+
+	/** Note the life qualification on a window row as one the NPN holds. */
+	private function remember_qualification( string $npn, array $row ): void {
+		$qualification = self::text( $row, 'qualification' );
+		if ( $qualification !== '' ) {
+			$this->qualifications[ $npn ][ $qualification ] = true;
+		}
 	}
 
 	/**
@@ -237,7 +263,8 @@ class Freshmints_Registry_Producer_Rows {
 			foreach ( $chunk as $npn ) {
 				$first_day = $first[ $npn ] ?? '';
 				if ( $first_day !== '' && $first_day >= $since_day && count( $kept ) < $room ) {
-					$kept[] = $npn;
+					$kept[]                  = $npn;
+					$this->first_days[ $npn ] = $first_day;
 				}
 			}
 		}
@@ -248,7 +275,8 @@ class Freshmints_Registry_Producer_Rows {
 	/**
 	 * Each NPN's earliest life licence row on or after $since, fetched directly. An NPN whose chunk fails is
 	 * simply absent from the result, so the caller keeps the row it already has (still a real licence in
-	 * the window, just possibly not the earliest).
+	 * the window, just possibly not the earliest). The same rows are every life line the NPN holds in the
+	 * window, so they also complete the qualifications seen so far (a page read stopped early may have missed some).
 	 *
 	 * @param string[] $npns
 	 * @return array<string,array> npn => row.
@@ -275,7 +303,11 @@ class Freshmints_Registry_Producer_Rows {
 
 			foreach ( $rows as $row ) {
 				$npn = self::npn( $row );
-				if ( $npn !== '' && ! isset( $earliest[ $npn ] ) ) {
+				if ( $npn === '' ) {
+					continue;
+				}
+				$this->remember_qualification( $npn, $row );
+				if ( ! isset( $earliest[ $npn ] ) ) {
 					$earliest[ $npn ] = $row;
 				}
 			}
@@ -343,18 +375,32 @@ class Freshmints_Registry_Producer_Rows {
 	/**
 	 * A row's fields, each cleaned and with '' for anything missing or malformed.
 	 *
-	 * @return array{npn:string,license:string,name:string,qualification:string,issue_date:string,city:string,postal:string}
+	 * `first_issue` and `qualifications` are the person-level values first_license_rows() adds ('' and an empty
+	 * list on a row that did not come from it): the date of the person's first licence of any line, and every
+	 * life qualification they hold in the window.
+	 *
+	 * @return array{npn:string,license:string,name:string,qualification:string,issue_date:string,city:string,postal:string,first_issue:string,qualifications:string[]}
 	 */
 	public static function fields( array $row ): array {
+		$qualifications = array();
+		foreach ( (array) ( $row['_qualifications'] ?? array() ) as $qualification ) {
+			$qualification = is_scalar( $qualification ) ? trim( (string) preg_replace( '/\s+/', ' ', (string) $qualification ) ) : '';
+			if ( $qualification !== '' ) {
+				$qualifications[] = $qualification;
+			}
+		}
+
 		return array(
-			'npn'           => self::token( $row, 'npn' ),
-			'license'       => self::token( $row, 'license_number' ),
-			'name'          => self::text( $row, 'name' ),
-			'license_type'  => self::text( $row, 'license_type' ),
-			'qualification' => self::text( $row, 'qualification' ),
-			'issue_date'    => self::issue_date( self::text( $row, 'license_issue_date' ) ),
-			'city'          => self::text( $row, 'city' ),
-			'postal'        => self::text( $row, 'pstl_cd' ),
+			'npn'            => self::token( $row, 'npn' ),
+			'license'        => self::token( $row, 'license_number' ),
+			'name'           => self::text( $row, 'name' ),
+			'license_type'   => self::text( $row, 'license_type' ),
+			'qualification'  => self::text( $row, 'qualification' ),
+			'issue_date'     => self::issue_date( self::text( $row, 'license_issue_date' ) ),
+			'city'           => self::text( $row, 'city' ),
+			'postal'         => self::text( $row, 'pstl_cd' ),
+			'first_issue'    => self::issue_date( self::text( $row, '_first_issue' ) ),
+			'qualifications' => $qualifications,
 		);
 	}
 

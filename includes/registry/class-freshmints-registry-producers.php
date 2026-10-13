@@ -103,12 +103,19 @@ class Freshmints_Registry_Producers {
 	}
 
 	/**
+	 * Every state fetch() has a registry for, in the order a sync should run them.
+	 *
+	 * @return string[]
+	 */
+	public static function states(): array {
+		return array( self::SUPPORTED_STATE, Freshmints_Registry_Producers_IA::SUPPORTED_STATE );
+	}
+
+	/**
 	 * Whether fetch() has a registry for the state ('TX' or 'IA').
 	 */
 	public static function supports( string $state ): bool {
-		$state = strtoupper( trim( $state ) );
-
-		return $state === self::SUPPORTED_STATE || $state === Freshmints_Registry_Producers_IA::SUPPORTED_STATE;
+		return in_array( strtoupper( trim( $state ) ), self::states(), true );
 	}
 
 	/**
@@ -219,11 +226,16 @@ class Freshmints_Registry_Producers {
 			'estimatedDealValue' => $deal_value,
 			'createdAt'          => gmdate( 'c' ),
 			// The registry's own values, unformatted, for callers that store the person (Agent Finder sync).
+			// `qualification` is the one licence row this lead was built from. `firstIssueDate` and `qualifications`
+			// are the person's whole record: the date of their first licence of any line, and every life
+			// qualification they hold in the window ('' and [] when the fetch did not look the person up).
 			'registry'           => array(
-				'npn'           => $f['npn'],
-				'licenseType'   => $f['license_type'],
-				'qualification' => $f['qualification'],
-				'postalCode'    => $f['postal'],
+				'npn'            => $f['npn'],
+				'licenseType'    => $f['license_type'],
+				'qualification'  => $f['qualification'],
+				'postalCode'     => $f['postal'],
+				'firstIssueDate' => $f['first_issue'],
+				'qualifications' => $f['qualifications'],
 			),
 		);
 	}

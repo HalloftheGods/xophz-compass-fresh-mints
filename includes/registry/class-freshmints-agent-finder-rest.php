@@ -9,8 +9,11 @@
  *        since: ISO 8601 date or datetime (no zone means UTC); keeps agents first seen at or after it.
  *        annuity_capable: true or false; omit for both.  delivery_status: pending, delivered or failed.
  * POST /wp-json/xophz-freshmints/v1/agent-finder/run-now   no body
- *        -> { run: {...} } when the run finished, even a partial one; 409 freshmints_agent_finder_running
- *           when a run is already going. The run is synchronous: a normal 7-day window takes a few seconds.
+ *        -> { runs: [...] } one run per state (Texas, then Iowa), each finished even when partial;
+ *           409 freshmints_agent_finder_running when a sync is already going. The sync is synchronous: a normal
+ *           7-day window takes a few seconds per state, and a cold Iowa read downloads a 52 MB file.
+ *        Each run, and each entry of /runs, names its `state`. Each agent carries `registryContact`, the contact
+ *        details the State published (Iowa), or null. That is public business contact, not consent.
  *
  * Both list responses also carry `delivery`, the HighLevel delivery state from Freshmints_Crm_Delivery::summary():
  * { configured, message, maxAttempts, agents: {pending, failed, delivered, exhausted}, leads: {...}, lastBatch }.
@@ -108,14 +111,18 @@ class Freshmints_Agent_Finder_Rest {
 	}
 
 	public function handle_run_now() {
-		$run = ( new Freshmints_Agent_Finder_Sync() )->run( 'manual' );
-		if ( is_wp_error( $run ) ) {
-			return $run;
+		$runs = ( new Freshmints_Agent_Finder_Sync() )->run( 'manual' );
+		if ( is_wp_error( $runs ) ) {
+			return $runs;
 		}
 
-		// The ids go to the delivery listeners; the response only carries the run's counts.
-		unset( $run['new_agent_ids'] );
-		return new WP_REST_Response( array( 'run' => $this->shape_run( $run ) ) );
+		// The ids go to the delivery listeners; the response only carries each run's counts.
+		foreach ( $runs as &$run ) {
+			unset( $run['new_agent_ids'] );
+		}
+		unset( $run );
+
+		return new WP_REST_Response( array( 'runs' => array_map( array( $this, 'shape_run' ), $runs ) ) );
 	}
 
 	private function paged( string $key, array $items, int $total, int $page, int $per ): WP_REST_Response {
@@ -144,6 +151,7 @@ class Freshmints_Agent_Finder_Rest {
 
 		return array(
 			'id'          => (int) $r['id'],
+			'state'       => (string) $r['state'],
 			'trigger'     => (string) $r['trigger_source'],
 			'status'      => $status,
 			'startedAt'   => self::iso( $r['started_at'] ),
@@ -161,23 +169,30 @@ class Freshmints_Agent_Finder_Rest {
 
 	private function shape_agent( array $a ): array {
 		return array(
-			'id'             => (int) $a['id'],
-			'npn'            => (string) $a['npn'],
-			'name'           => (string) $a['name'],
-			'licenseType'    => (string) $a['license_type'],
-			'qualification'  => (string) $a['qualification'],
-			'annuityCapable' => (int) $a['annuity_capable'] === 1,
-			'firstIssueDate' => $a['first_issue_date'] === null ? null : (string) $a['first_issue_date'],
-			'city'           => (string) $a['city'],
-			'state'          => (string) $a['state'],
-			'zip'            => (string) $a['zip'],
-			'sourceLabel'    => (string) $a['source_label'],
-			'firstSeenRunId' => (int) $a['first_seen_run_id'],
-			'firstSeenAt'    => self::iso( $a['first_seen_at'] ),
-			'deliveryStatus' => (string) $a['delivery_status'],
-			'deliveredAt'    => self::iso( $a['delivered_at'] ),
-			'attempts'       => (int) $a['attempts'],
+			'id'              => (int) $a['id'],
+			'npn'             => (string) $a['npn'],
+			'name'            => (string) $a['name'],
+			'licenseType'     => (string) $a['license_type'],
+			'qualification'   => (string) $a['qualification'],
+			'annuityCapable'  => (int) $a['annuity_capable'] === 1,
+			'firstIssueDate'  => $a['first_issue_date'] === null ? null : (string) $a['first_issue_date'],
+			'city'            => (string) $a['city'],
+			'state'           => (string) $a['state'],
+			'zip'             => (string) $a['zip'],
+			'sourceLabel'     => (string) $a['source_label'],
+			'registryContact' => self::contact( $a['registry_contact'] ?? null ),
+			'firstSeenRunId'  => (int) $a['first_seen_run_id'],
+			'firstSeenAt'     => self::iso( $a['first_seen_at'] ),
+			'deliveryStatus'  => (string) $a['delivery_status'],
+			'deliveredAt'     => self::iso( $a['delivered_at'] ),
+			'attempts'        => (int) $a['attempts'],
 		);
+	}
+
+	/** The stored contact JSON as an array, or null when the agent has none (or it is not readable). */
+	private static function contact( $json ): ?array {
+		$decoded = is_string( $json ) && $json !== '' ? json_decode( $json, true ) : null;
+		return is_array( $decoded ) && $decoded !== array() ? $decoded : null;
 	}
 
 	/** A stored UTC datetime as ISO 8601 with a Z, or null when it is empty. */

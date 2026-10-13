@@ -3,7 +3,7 @@
  * Storage for the Agent Finder weekly sync: two custom tables and the queries on them.
  *
  *   {prefix}freshmints_af_agents  one row per NPN (unique key), the newly licensed agent as the registry gave it
- *   {prefix}freshmints_af_runs    one row per sync run: window, counts, partial flag, error code, timing
+ *   {prefix}freshmints_af_runs    one row per sync run and state: window, counts, partial flag, error code, timing
  *
  * Why tables and not a custom post type: an agent is looked up by NPN, listed with filters and counted in
  * the thousands, and a unique key is what makes the sync idempotent. Posts and postmeta can do none of that
@@ -14,10 +14,17 @@
  * of the delivery outcome (status, delivered_at, attempts + 1) for the HighLevel delivery (#6024); the only
  * other write is reset_failed_attempts(), which gives failed rows their attempts back for the admin retry.
  *
- * Two columns come from the one licence row the registry builds each lead from, the person's EARLIEST LIFE
- * licence in the window: `first_issue_date` is that row's issue date (later than the person's true first
- * licence for the few people whose first Texas licence was not a life line) and `qualification` and
- * `annuity_capable` come from that row too.
+ * `first_issue_date` and `annuity_capable` describe the person's whole record in the window, as the sync's
+ * mapper works them out (Freshmints_Agent_Finder_Mapper): the date of their first licence of any line, and
+ * whether any life line they hold carries annuity authority. `qualification` and `license_type` are those of
+ * the one licence row the registry builds each lead from, the person's earliest life licence in the window.
+ * Rows stored before version 2 of the tables (#6059) keep the values they were stored with.
+ *
+ * `registry_contact` holds the contact details a State publishes for the person (Iowa: business email, phone,
+ * address) as JSON, or NULL. It is public business contact, NOT consent to be contacted.
+ *
+ * Each run row names its `state`. A run belongs to one state, and last_complete_window_end() looks only at
+ * that state's runs, so a failed run for one state does not move another state's window.
  *
  * Times are stored in UTC. The tables are created and upgraded with dbDelta and are left in place when the
  * plugin is deactivated.
@@ -29,7 +36,7 @@ if ( ! defined( 'WPINC' ) ) {
 
 class Freshmints_Agent_Finder_Store {
 
-	const DB_VERSION        = '1';
+	const DB_VERSION        = '2';
 	const DB_VERSION_OPTION = 'freshmints_agent_finder_db_version';
 	const INSERT_CHUNK      = 200;
 
@@ -68,6 +75,7 @@ class Freshmints_Agent_Finder_Store {
 			state VARCHAR(2) NOT NULL DEFAULT '',
 			zip VARCHAR(16) NOT NULL DEFAULT '',
 			source_label VARCHAR(191) NOT NULL DEFAULT '',
+			registry_contact TEXT NULL,
 			first_seen_run_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
 			first_seen_at DATETIME NOT NULL,
 			delivery_status VARCHAR(16) NOT NULL DEFAULT 'pending',
@@ -82,6 +90,7 @@ class Freshmints_Agent_Finder_Store {
 
 		dbDelta( "CREATE TABLE {$runs} (
 			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			state VARCHAR(2) NOT NULL DEFAULT 'TX',
 			trigger_source VARCHAR(16) NOT NULL DEFAULT 'cron',
 			started_at DATETIME NOT NULL,
 			finished_at DATETIME NULL,
@@ -94,6 +103,7 @@ class Freshmints_Agent_Finder_Store {
 			error_code VARCHAR(48) NOT NULL DEFAULT '',
 			duration_ms INT UNSIGNED NOT NULL DEFAULT 0,
 			PRIMARY KEY  (id),
+			KEY state_window_end (state,window_end),
 			KEY started_at (started_at)
 		) {$charset};" );
 
@@ -106,12 +116,13 @@ class Freshmints_Agent_Finder_Store {
 		}
 	}
 
-	/** Open a run row; finish_run() closes it. A run left open was interrupted. */
-	public static function start_run( string $trigger, int $window_start_ts, int $window_end_ts ): int {
+	/** Open a run row for a state; finish_run() closes it. A run left open was interrupted. */
+	public static function start_run( string $trigger, int $window_start_ts, int $window_end_ts, string $state = 'TX' ): int {
 		global $wpdb;
 		$wpdb->insert(
 			self::runs_table(),
 			array(
+				'state'          => strtoupper( substr( $state, 0, 2 ) ),
 				'trigger_source' => $trigger,
 				'started_at'     => gmdate( 'Y-m-d H:i:s' ),
 				'window_start'   => gmdate( 'Y-m-d H:i:s', $window_start_ts ),
@@ -142,13 +153,17 @@ class Freshmints_Agent_Finder_Store {
 	}
 
 	/**
-	 * Unix time the last fully completed run's window ended, or null when no run has completed.
+	 * Unix time the last fully completed run's window ended for the state, or null when none has completed.
 	 * Completed means finished and not partial; a capped window is still complete (its error code only informs).
+	 * Only that state's runs count, so each state's window is tracked on its own.
 	 */
-	public static function last_complete_window_end(): ?int {
+	public static function last_complete_window_end( string $state = 'TX' ): ?int {
 		global $wpdb;
 		$table = self::runs_table();
-		$end   = $wpdb->get_var( "SELECT MAX(window_end) FROM {$table} WHERE finished_at IS NOT NULL AND partial = 0" );
+		$end   = $wpdb->get_var( $wpdb->prepare(
+			"SELECT MAX(window_end) FROM {$table} WHERE state = %s AND finished_at IS NOT NULL AND partial = 0",
+			strtoupper( substr( $state, 0, 2 ) )
+		) );
 		return is_string( $end ) && $end !== '' ? (int) strtotime( $end . ' UTC' ) : null;
 	}
 
@@ -156,7 +171,7 @@ class Freshmints_Agent_Finder_Store {
 	 * Store each agent once per NPN; an NPN already stored is left exactly as it is.
 	 *
 	 * @param array[] $agents Rows with npn, name, license_type, qualification, annuity_capable, first_issue_date,
-	 *                        city, state, zip, source_label.
+	 *                        city, state, zip, source_label and (optional) registry_contact, a JSON string or ''.
 	 * @return int[] Ids of the rows this call inserted, oldest first.
 	 */
 	public static function insert_new_agents( array $agents, int $run_id ): array {
@@ -168,13 +183,13 @@ class Freshmints_Agent_Finder_Store {
 			$tuples = array();
 			foreach ( $chunk as $a ) {
 				$tuples[] = $wpdb->prepare(
-					"(%s,%s,%s,%s,%d,NULLIF(%s,''),%s,%s,%s,%s,%d,%s)",
+					"(%s,%s,%s,%s,%d,NULLIF(%s,''),%s,%s,%s,%s,NULLIF(%s,''),%d,%s)",
 					$a['npn'], $a['name'], $a['license_type'], $a['qualification'], $a['annuity_capable'] ? 1 : 0,
-					$a['first_issue_date'], $a['city'], $a['state'], $a['zip'], $a['source_label'], $run_id, $now
+					$a['first_issue_date'], $a['city'], $a['state'], $a['zip'], $a['source_label'], (string) ( $a['registry_contact'] ?? '' ), $run_id, $now
 				);
 			}
 			$wpdb->query(
-				"INSERT IGNORE INTO {$table} (npn,name,license_type,qualification,annuity_capable,first_issue_date,city,state,zip,source_label,first_seen_run_id,first_seen_at) VALUES "
+				"INSERT IGNORE INTO {$table} (npn,name,license_type,qualification,annuity_capable,first_issue_date,city,state,zip,source_label,registry_contact,first_seen_run_id,first_seen_at) VALUES "
 				. implode( ',', $tuples )
 			);
 		}
