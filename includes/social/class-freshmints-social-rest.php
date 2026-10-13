@@ -6,6 +6,9 @@
  *   body:     { platform: 'reddit', keywords: string[], targetChannels: string[] }
  *   response: the provider outcome, one of
  *             { status: 'ok', posts }, { status: 'blocked', reason }, { status: 'failed', reason }
+ *
+ * Each run that answers ok is counted for the pilot report (Freshmints_Pilot_Events): the platform
+ * and how many posts came back. No post, author or keyword is kept.
  */
 
 if ( ! defined( 'WPINC' ) ) {
@@ -49,9 +52,13 @@ class Freshmints_Social_Rest {
 
 		$provider = self::PROVIDERS[ $platform ];
 
-		return rest_ensure_response( $provider::fetch_posts( array(
+		$outcome = $provider::fetch_posts( array(
 			'keywords'       => $body['keywords'] ?? array(),
 			'targetChannels' => $body['targetChannels'] ?? array(),
-		) ) );
+		) );
+
+		Freshmints_Pilot_Events::record_fetch( $platform, $outcome );
+
+		return rest_ensure_response( $outcome );
 	}
 }

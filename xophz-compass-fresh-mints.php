@@ -33,6 +33,12 @@ require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/class-freshmints-s
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/class-freshmints-social-retention.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/class-freshmints-social-dispatch-rest.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/crm/class-freshmints-crm-webhook-rest.php';
+require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/reports/class-freshmints-pilot-events.php';
+require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/reports/class-freshmints-pilot-report-range.php';
+require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/reports/class-freshmints-pilot-report-leads.php';
+require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/reports/class-freshmints-pilot-report-agents.php';
+require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/reports/class-freshmints-pilot-report-csv.php';
+require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/reports/class-freshmints-pilot-report-rest.php';
 
 function run_xophz_compass_freshmints() {
 	$admin = new Xophz_Compass_Freshmints_Admin( 'xophz-compass-freshmints', XOPHZ_COMPASS_FRESHMINTS_VERSION );
@@ -66,6 +72,9 @@ function run_xophz_compass_freshmints() {
 
 		$crm_webhook = new Freshmints_Crm_Webhook_Rest();
 		$crm_webhook->register_routes();
+
+		$pilot_report = new Freshmints_Pilot_Report_Rest();
+		$pilot_report->register_routes();
 
 		$agent_finder = new Freshmints_Agent_Finder_Rest();
 		$agent_finder->register_routes();

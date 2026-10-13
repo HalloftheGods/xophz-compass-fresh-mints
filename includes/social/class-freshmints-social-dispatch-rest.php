@@ -7,10 +7,15 @@
  * browser. The browser only says "dispatch this reply"; this class makes the one POST.
  *
  * POST /wp-json/xophz-freshmints/v1/social/dispatch
- *   body:     { platform, threadUrl, prospect, intentScore, matchedKeyword, replyBody }
+ *   body:     { platform, threadUrl, prospect, intentScore, matchedKeyword, replyBody, leadId }
  *   success:  { success: true, message, status }
  *   errors:   freshmints_webhook_not_configured (400), freshmints_dispatch_invalid (400),
  *             freshmints_webhook_unreachable (502), freshmints_webhook_rejected (502)
+ *
+ * Each reply the human dispatches is counted for the pilot report (Freshmints_Pilot_Events): the
+ * platform and leadId, nothing else. The webhook accepting the POST counts one 'webhook' reply.
+ * With no webhook configured the app copies the reply for the human to paste, so that dispatch
+ * counts one 'copy' reply. A webhook that is unreachable or rejects the POST counts nothing.
  *
  * Error responses carry only the connector id, an error code and the webhook's HTTP status.
  * They never carry the webhook URL or the text of a transport error.
@@ -46,6 +51,8 @@ class Freshmints_Social_Dispatch_Rest {
 	public function handle_dispatch( WP_REST_Request $request ) {
 		$webhook_url = Freshmints_Connectors::get_key( self::CONNECTOR_ID );
 		if ( $webhook_url === '' ) {
+			$this->count_reply( $request, Freshmints_Pilot_Events::VIA_COPY );
+
 			return new WP_Error(
 				'freshmints_webhook_not_configured',
 				'No dispatch webhook is configured. Add the Social Dispatch Webhook URL under Settings > Connectors.',
@@ -91,11 +98,28 @@ class Freshmints_Social_Dispatch_Rest {
 			);
 		}
 
+		$this->count_reply( $request, Freshmints_Pilot_Events::VIA_WEBHOOK );
+
 		return rest_ensure_response( array(
 			'success' => true,
 			'message' => 'Pitch dispatched to connected funnel webhook (Slack/Discord/Zapier).',
 			'status'  => $status,
 		) );
+	}
+
+	/**
+	 * Count this dispatch for the pilot report, when it carries a reply to send. Platform and lead id
+	 * only: the reply text, the thread and the prospect are not kept.
+	 */
+	private function count_reply( WP_REST_Request $request, string $via ) {
+		$body = $request->get_json_params();
+		$body = is_array( $body ) ? $body : array();
+
+		if ( $this->build_payload( $body ) === null ) {
+			return;
+		}
+
+		Freshmints_Pilot_Events::record_reply( $body['platform'] ?? '', $body['leadId'] ?? '', $via );
 	}
 
 	/**
