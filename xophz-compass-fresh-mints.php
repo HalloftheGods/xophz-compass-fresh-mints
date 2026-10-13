@@ -24,6 +24,7 @@ require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'public/class-xophz-compass-freshmi
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/class-freshmints-connectors.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/class-freshmints-api.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/registry/class-freshmints-registry-producers.php';
+require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/registry/class-freshmints-agent-finder-rest.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-freshmints-social-reddit-api.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-freshmints-social-provider-reddit.php';
 require_once XOPHZ_COMPASS_FRESHMINTS_PATH . 'includes/social/providers/class-freshmints-social-provider-stackexchange.php';
@@ -46,6 +47,9 @@ function run_xophz_compass_freshmints() {
 	add_filter( 'query_vars', array( $public, 'register_query_vars' ) );
 	add_action( 'template_redirect', array( $public, 'template_redirect' ), 5 );
 
+	// Agent Finder weekly sync: tables and schedule on init, run on the weekly hook
+	( new Freshmints_Agent_Finder_Sync() )->register();
+
 	// REST API Controller
 	add_action( 'rest_api_init', function() {
 		$api = new Freshmints_API();
@@ -62,6 +66,9 @@ function run_xophz_compass_freshmints() {
 
 		$crm_webhook = new Freshmints_Crm_Webhook_Rest();
 		$crm_webhook->register_routes();
+
+		$agent_finder = new Freshmints_Agent_Finder_Rest();
+		$agent_finder->register_routes();
 	} );
 
 	// Register with Event Horizon / YouMeOS Spark Registry
@@ -239,11 +246,13 @@ function xophz_compass_freshmints_activate() {
 	$public = new Xophz_Compass_Freshmints_Public( 'xophz-compass-freshmints', XOPHZ_COMPASS_FRESHMINTS_VERSION );
 	$public->register_endpoints();
 	flush_rewrite_rules();
+	Freshmints_Agent_Finder_Sync::activate();
 }
 register_activation_hook( __FILE__, 'xophz_compass_freshmints_activate' );
 
 function xophz_compass_freshmints_deactivate() {
 	flush_rewrite_rules();
+	Freshmints_Agent_Finder_Sync::deactivate();
 }
 register_deactivation_hook( __FILE__, 'xophz_compass_freshmints_deactivate' );
 

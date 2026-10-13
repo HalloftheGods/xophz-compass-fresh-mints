@@ -13,6 +13,11 @@
  * delivered or not, so the identity fields keep what the first run saw. record_delivery() is the one writer
  * of the delivery columns, for the delivery task (#6024).
  *
+ * Two columns come from the one licence row the registry builds each lead from, the person's EARLIEST LIFE
+ * licence in the window: `first_issue_date` is that row's issue date (later than the person's true first
+ * licence for the few people whose first Texas licence was not a life line) and `qualification` and
+ * `annuity_capable` come from that row too.
+ *
  * Times are stored in UTC. The tables are created and upgraded with dbDelta and are left in place when the
  * plugin is deactivated.
  */
