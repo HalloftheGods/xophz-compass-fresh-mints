@@ -4,9 +4,10 @@
  *
  * Reads newly licensed life insurance producers from the Texas Department of
  * Insurance open dataset on data.texas.gov (Socrata SODA, dataset kxv3-diwf)
- * and emits leads in the same array shape as the NY Socrata branch of
- * Freshmints_API::handle_fetch_live_registry, so the response envelope
- * ( leads, source, groundingNotes ) is unchanged.
+ * and emits leads in the same array shape as the NY Socrata branch
+ * (Freshmints_Api_Registry_Sources::new_york(), called from
+ * Freshmints_Api_Registry::handle_fetch_live_registry in includes/api/), so the
+ * response envelope ( leads, source, groundingNotes ) is unchanged.
  *
  * "Newly licensed" means a person whose EARLIEST Texas licence of any kind was
  * issued inside the window: a producer who has held a Texas licence for years
