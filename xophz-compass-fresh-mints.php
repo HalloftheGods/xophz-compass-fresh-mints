@@ -4,7 +4,8 @@
  * Plugin URI:        https://freshmints.worldwidewebwork.com
  * Description:       Turnkey lead discovery, license registry audit, skip-tracing, and practice website launcher platform integrated with Questbook CRM and WP Connectors API.
  * Version:           26.10.14
- * Author:            Hall of the Gods, Inc.
+ * Author:            My Compass Consulting
+ * Author URI:        https://mycompassconsulting.com/
  * Category:          Command Deck
  * Group:             Ecosystem
  * Text Domain:       xophz-compass-fresh-mints
